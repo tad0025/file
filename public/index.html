@@ -36,33 +36,42 @@
             return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
+        let inFlight = 0;
+        const MAX_IN_FLIGHT = 3; // Luôn duy trì 3 chunk trên server
+        const CHUNK_SIZE = 128 * 1024; 
+        let offset = 0;
+        let fileObj, tidVal;
+
         function send() {
-            const file = document.getElementById('f').files[0];
-            const tid = document.getElementById('tid').value;
-            if(!file || !tid) return alert("Thiếu thông tin");
+            fileObj = document.getElementById('f').files[0];
+            tidVal = document.getElementById('tid').value;
+            if(!fileObj || !tidVal) return alert("Thiếu thông tin");
 
-            ws = new WebSocket(`${host}?role=sender&tid=${tid}`);
+            ws = new WebSocket(`${host}?role=sender&tid=${tidVal}`);
             ws.onopen = async () => {
-                const fileHash = await hash(file);
-                // Gửi metadata đầu tiên
-                ws.send(JSON.stringify({ name: file.name, size: file.size, hash: fileHash }));
-            };
-
-            ws.onmessage = async (e) => {
-                if (e.data === "next") { // Nhận ACK từ receiver
-                    sendChunk();
+                const fileHash = await hash(fileObj);
+                ws.send(JSON.stringify({ name: fileObj.name, size: fileObj.size, hash: fileHash }));
+                // Đẩy 3 chunk đầu tiên lên ngay lập tức để lấp đầy hàng đợi server
+                for(let i=0; i < MAX_IN_FLIGHT; i++) {
+                    sendNextChunk();
                 }
             };
 
-            let offset = 0;
-            const CHUNK_SIZE = 128 * 1024; // 128KB
-            function sendChunk() {
-                if (offset < file.size) {
-                    const chunk = file.slice(offset, offset + CHUNK_SIZE);
-                    ws.send(chunk);
-                    offset += CHUNK_SIZE;
-                    document.getElementById('bar').style.width = (offset/file.size*100) + '%';
+            ws.onmessage = (e) => {
+                if (e.data === "next") {
+                    inFlight--; // Receiver đã nhận xong 1 chunk
+                    sendNextChunk(); // Gửi tiếp 1 chunk mới để lấp chỗ trống
                 }
+            };
+        }
+
+        function sendNextChunk() {
+            if (offset < fileObj.size && inFlight < MAX_IN_FLIGHT) {
+                const chunk = fileObj.slice(offset, offset + CHUNK_SIZE);
+                ws.send(chunk);
+                offset += CHUNK_SIZE;
+                inFlight++;
+                document.getElementById('bar').style.width = (offset/fileObj.size*100) + '%';
             }
         }
 

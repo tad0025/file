@@ -2,7 +2,9 @@
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN go mod download
+
+# Tự động tạo go.sum và tải thư viện
+RUN go mod tidy 
 RUN go build -o server main.go
 
 # Run stage
