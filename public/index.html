@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Go Relay Transfer</title>
+    <title>Thành Đạt</title>
     <meta charset="UTF-8">
     <style>
         body { font-family: sans-serif; max-width: 500px; margin: 50px auto; background: #f4f4f4; padding: 20px; }
@@ -23,12 +23,29 @@
         <h4>Nhận</h4>
         <button onclick="receive()" style="background: #28a745; color: white; border: none;">Chế độ chờ nhận</button>
         <div class="progress"><div id="bar"></div></div>
+        <div id="stats" style="font-size: 13px; color: #333; display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span id="speed">Tốc độ: 0 MB/s</span>
+            <span id="eta">Còn lại: --:--</span>
+        </div>
         <p id="msg" style="font-size: 12px; color: #666;"></p>
     </div>
 
     <script>
         let ws;
         const host = location.origin.replace(/^http/, 'ws') + '/ws';
+
+        function formatSpeed(bytesPerSec) {
+            if (bytesPerSec > 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + " MB/s";
+            return (bytesPerSec / 1024).toFixed(2) + " KB/s";
+        }
+
+        function formatTime(seconds) {
+            if (!isFinite(seconds) || seconds < 0) return "--:--";
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return (h > 0 ? h + ":" : "") + (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+        }
 
         async function hash(file) {
             const buffer = await file.arrayBuffer();
@@ -37,41 +54,50 @@
         }
 
         let inFlight = 0;
-        const MAX_IN_FLIGHT = 3; // Luôn duy trì 3 chunk trên server
-        const CHUNK_SIZE = 128 * 1024; 
-        let offset = 0;
-        let fileObj, tidVal;
+        const MAX_IN_FLIGHT = 3;
+        const CHUNK_SIZE = 128 * 1024;
+        let offset = 0, startTime = 0, fileObj;
+
+        function updateUI(currentBytes, totalSize) {
+            const percent = (currentBytes / totalSize * 100);
+            document.getElementById('bar').style.width = percent + '%';
+
+            const now = performance.now();
+            const duration = (now - startTime) / 1000;
+            if (duration > 0) {
+                const speed = currentBytes / duration;
+                const remainingBytes = totalSize - currentBytes;
+                const eta = remainingBytes / speed;
+
+                document.getElementById('speed').innerText = `Tốc độ: ${formatSpeed(speed)}`;
+                document.getElementById('eta').innerText = `Còn lại: ${formatTime(eta)}`;
+            }
+        }
 
         function send() {
             fileObj = document.getElementById('f').files[0];
-            tidVal = document.getElementById('tid').value;
-            if(!fileObj || !tidVal) return alert("Thiếu thông tin");
+            const tid = document.getElementById('tid').value;
+            if(!fileObj || !tid) return alert("Thiếu thông tin");
 
-            ws = new WebSocket(`${host}?role=sender&tid=${tidVal}`);
+            ws = new WebSocket(`${host}?role=sender&tid=${tid}`);
             ws.onopen = async () => {
-                document.getElementById('msg').innerText = "Đang chờ người nhận...";
+                document.getElementById('msg').innerText = "Đang tính toán hash và chờ kết nối...";
                 const fileHash = await hash(fileObj);
                 ws.send(JSON.stringify({ name: fileObj.name, size: fileObj.size, hash: fileHash }));
-                // Đẩy 3 chunk đầu tiên lên ngay lập tức để lấp đầy hàng đợi server
-                for(let i=0; i < MAX_IN_FLIGHT; i++) {
-                    sendNextChunk();
-                }
+                startTime = performance.now();
+                for(let i=0; i < MAX_IN_FLIGHT; i++) sendNextChunk();
             };
 
             ws.onmessage = (e) => {
                 if (e.data === "next") {
-                    inFlight--; // Receiver đã nhận xong 1 chunk
-                    sendNextChunk(); // Gửi tiếp 1 chunk mới để lấp chỗ trống
+                    inFlight--;
+                    sendNextChunk();
+                    updateUI(offset, fileObj.size);
                 }
             };
 
-            ws.onerror = () => {
-                document.getElementById('msg').innerText = "❌ Lỗi kết nối!";
-            };
-
-            ws.onclose = () => {
-                document.getElementById('msg').innerText = "Kết nối đã đóng.";
-            };
+            ws.onerror = () => { document.getElementById('msg').innerText = "❌ Lỗi kết nối!"; };
+            ws.onclose = () => { document.getElementById('msg').innerText = "Kết nối đã đóng."; };
         }
 
         function sendNextChunk() {
@@ -80,7 +106,6 @@
                 ws.send(chunk);
                 offset += CHUNK_SIZE;
                 inFlight++;
-                document.getElementById('bar').style.width = (offset/fileObj.size*100) + '%';
             }
         }
 
@@ -89,46 +114,37 @@
             if (!tid) return alert("Nhập mã Transfer ID trước");
 
             try {
-                // 1. Mở hộp thoại lưu file trước khi kết nối (Yêu cầu quyền ghi của người dùng)
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: 'dang_tai_file', 
-                });
+                const handle = await window.showSaveFilePicker({ suggestedName: 'file_tai_ve' });
                 const writable = await handle.createWritable();
 
                 ws = new WebSocket(`${host}?role=receiver&tid=${tid}`);
                 let meta, receivedBytes = 0;
 
-                document.getElementById('msg').innerText = "Đang kết nối...";
-
                 ws.onmessage = async (e) => {
                     if (typeof e.data === "string") {
                         meta = JSON.parse(e.data);
-                        document.getElementById('msg').innerText = "Đang nhận trực tiếp xuống đĩa: " + meta.name;
+                        document.getElementById('msg').innerText = "Đang nhận: " + meta.name;
+                        startTime = performance.now();
                         ws.send("next");
                     } else {
-                        // 2. Ghi trực tiếp chunk dữ liệu vào file trên ổ đĩa
                         await writable.write(e.data);
-                        
                         receivedBytes += e.data.byteLength;
-                        document.getElementById('bar').style.width = (receivedBytes / meta.size * 100) + '%';
+                        updateUI(receivedBytes, meta.size);
 
                         if (receivedBytes >= meta.size) {
-                            // 3. Đóng luồng ghi sau khi hoàn tất
                             await writable.close();
-                            document.getElementById('msg').innerText = "✅ Đã lưu trực tiếp vào máy!";
-                            // Lưu ý: Với file cực lớn, việc tính lại hash để đối soát sẽ tốn thời gian 
-                            // vì phải đọc lại file từ đĩa. Bạn có thể bỏ qua bước hash ở đây để tối ưu tốc độ.
+                            document.getElementById('msg').innerText = "✅ Đã tải xong và lưu vào máy!";
                         } else {
                             ws.send("next");
                         }
                     }
                 };
 
-                ws.onclose = () => { writable.close(); };
+                ws.onerror = () => { document.getElementById('msg').innerText = "❌ Lỗi kết nối!"; };
+                ws.onclose = () => { writable.close(); document.getElementById('msg').innerText = "Kết nối đã đóng."; };
 
             } catch (err) {
-                console.error("Lỗi FileSystem:", err);
-                document.getElementById('msg').innerText = "❌ Đã hủy hoặc trình duyệt không hỗ trợ FileSystem API";
+                document.getElementById('msg').innerText = "❌ Lỗi: " + err.message;
             }
         }
     </script>
