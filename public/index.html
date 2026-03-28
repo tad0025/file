@@ -1,40 +1,239 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html>
 <head>
     <title>Thành Đạt</title>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: sans-serif; max-width: 500px; margin: 50px auto; background: #f4f4f4; padding: 20px; }
-        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .progress { height: 10px; background: #eee; border-radius: 5px; margin: 15px 0; overflow: hidden; }
-        #bar { width: 0%; height: 100%; background: #007bff; transition: 0.1s; }
-        input, button { width: 100%; padding: 10px; margin: 5px 0; box-sizing: border-box; }
+        :root {
+            --bg: #f7f8fb;
+            --card: #ffffff;
+            --text: #121722;
+            --subtle: #5f6b7f;
+            --line: #dbe1eb;
+            --send: #2563eb;
+            --send-soft: #e8f0ff;
+            --recv: #159947;
+            --recv-soft: #e8f8ef;
+            --accent: #f59e0b;
+            --radius-lg: 16px;
+            --radius-md: 12px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: "Be Vietnam Pro", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 10% 0%, #fff8e7 0%, transparent 38%),
+                radial-gradient(circle at 100% 100%, #eaf2ff 0%, transparent 36%),
+                var(--bg);
+            min-height: 100vh;
+            padding: 18px;
+        }
+
+        .app {
+            max-width: 1040px;
+            margin: 0 auto;
+            display: grid;
+            gap: 16px;
+        }
+
+        .hero {
+            background: linear-gradient(120deg, #172033, #263a63);
+            color: #fff;
+            border-radius: var(--radius-lg);
+            padding: 18px;
+            box-shadow: 0 10px 28px rgba(23, 32, 51, 0.25);
+        }
+
+        .hero h3 {
+            margin: 0 0 6px 0;
+            font-size: clamp(20px, 4vw, 28px);
+            letter-spacing: 0.2px;
+        }
+
+        .hero p {
+            margin: 0;
+            color: #d9e4ff;
+            font-size: 14px;
+        }
+
+        .room {
+            display: grid;
+            gap: 10px;
+        }
+
+        .room label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--subtle);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+        }
+
+        input, button {
+            width: 100%;
+            min-height: 46px;
+            padding: 10px 12px;
+            font: inherit;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #fff;
+        }
+
+        input:focus, button:focus {
+            outline: 2px solid #bfd3ff;
+            outline-offset: 1px;
+        }
+
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 14px;
+        }
+
+        .panel {
+            background: var(--card);
+            border: 1px solid #e6ebf3;
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            box-shadow: 0 6px 20px rgba(18, 23, 34, 0.06);
+        }
+
+        .panel h4 {
+            margin: 0 0 12px;
+            font-size: 18px;
+        }
+
+        .hint {
+            margin: 0 0 10px;
+            color: var(--subtle);
+            font-size: 13px;
+        }
+
+        .action-send {
+            background: var(--send);
+            color: #fff;
+            border: none;
+            font-weight: 600;
+        }
+
+        .action-recv {
+            background: var(--recv);
+            color: #fff;
+            border: none;
+            font-weight: 600;
+        }
+
+        .progress {
+            height: 11px;
+            background: #edf1f7;
+            border-radius: 999px;
+            margin: 12px 0 8px;
+            overflow: hidden;
+        }
+
+        .bar {
+            width: 0%;
+            height: 100%;
+            transition: width .12s linear;
+        }
+
+        #sendBar { background: linear-gradient(90deg, var(--send), #4d89ff); }
+        #recvBar { background: linear-gradient(90deg, var(--recv), #45bf73); }
+
+        .stats {
+            font-size: 13px;
+            color: #364152;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+
+        .muted {
+            margin: 0;
+            font-size: 12px;
+            color: var(--subtle);
+            min-height: 18px;
+            word-break: break-word;
+        }
+
+        .panel.send { background: linear-gradient(180deg, #fff, var(--send-soft)); }
+        .panel.recv { background: linear-gradient(180deg, #fff, var(--recv-soft)); }
+
+        @media (min-width: 860px) {
+            body { padding: 28px; }
+            .panels { grid-template-columns: 1fr 1fr; }
+            .room { grid-template-columns: 220px 1fr; align-items: center; }
+            .room label { margin-bottom: 0; }
+        }
+
+        @media (max-width: 480px) {
+            .hero, .panel { padding: 14px; }
+            .panel h4 { font-size: 17px; }
+            .stats { font-size: 12px; }
+            input, button { min-height: 48px; }
+        }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h3>🚀 File Relay (Go)</h3>
-        <input type="text" id="tid" placeholder="Mã Transfer ID (VD: 123)">
-        <hr>
-        <h4>Gửi</h4>
-        <input type="file" id="f">
-        <button onclick="send()">Gửi File</button>
-        <hr>
-        <h4>Nhận</h4>
-        <button onclick="receive()" style="background: #28a745; color: white; border: none;">Chế độ chờ nhận</button>
-        <div class="progress"><div id="bar"></div></div>
-        <div id="stats" style="font-size: 13px; color: #333; display: flex; justify-content: space-between; margin-bottom: 5px;">
-            <span id="speed">Tốc độ: 0 MB/s</span>
-            <span id="eta">Còn lại: --:--</span>
-        </div>
-        <p id="msg" style="font-size: 12px; color: #666;"></p>
+    <div class="app">
+        <section class="hero">
+            <h3>Thành Đạt chuyển file</h3>
+            <p>Ngoan Ngoan gửi file nào.</p>
+        </section>
+
+        <section class="room panel">
+            <label for="tid">Transfer ID</label>
+            <input type="text" id="tid" placeholder="Nhập mã phòng, ví dụ: 12345">
+        </section>
+
+        <section class="panels">
+            <div class="panel send">
+                <h4>Gửi File</h4>
+                <p class="hint">Chọn file và bắt đầu upload liên tục.</p>
+                <input type="file" id="f">
+                <button class="action-send" onclick="send()">Gửi File</button>
+                <div class="progress"><div class="bar" id="sendBar"></div></div>
+                <div class="stats">
+                    <span id="sendSpeed">Tốc độ: 0 KB/s</span>
+                    <span id="sendEta">Còn lại: --:--</span>
+                </div>
+                <p id="sendMsg" class="muted"></p>
+            </div>
+
+            <div class="panel recv">
+                <h4>Nhận File</h4>
+                <p class="hint">Bật chế độ chờ và chọn nơi lưu trên thiết bị.</p>
+                <button class="action-recv" onclick="receive()">Chế độ chờ nhận</button>
+                <div class="progress"><div class="bar" id="recvBar"></div></div>
+                <div class="stats">
+                    <span id="recvSpeed">Tốc độ: 0 KB/s</span>
+                    <span id="recvEta">Còn lại: --:--</span>
+                </div>
+                <p id="recvMsg" class="muted"></p>
+            </div>
+        </section>
     </div>
+
     <script>
-        let ws;
         const host = location.origin.replace(/^http/, 'ws') + '/ws';
+        const CHUNK_SIZE = 256 * 1024;
+        const MAX_IN_FLIGHT = 3;
+
+        let sendState = null;
+        let recvState = null;
 
         function formatSpeed(bytesPerSec) {
-            if (bytesPerSec > 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + " MB/s";
+            if (!isFinite(bytesPerSec) || bytesPerSec <= 0) return "0 KB/s";
+            if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(2) + " MB/s";
             return (bytesPerSec / 1024).toFixed(2) + " KB/s";
         }
 
@@ -43,7 +242,7 @@
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             const s = Math.floor(seconds % 60);
-            return (h > 0 ? h + ":" : "") + (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+            return (h > 0 ? h + ":" : "") + String(m).padStart(2, '0') + ":" + String(s).padStart(2, '0');
         }
 
         function toHex(buffer) {
@@ -52,172 +251,294 @@
 
         async function hash(file) {
             const buffer = await file.arrayBuffer();
-            const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-            return toHex(hashBuffer);
+            return toHex(await crypto.subtle.digest('SHA-256', buffer));
         }
 
-        async function hashBuffers(buffers, totalSize) {
-            const merged = new Uint8Array(totalSize);
-            let p = 0;
-            for (const part of buffers) {
-                merged.set(part, p);
-                p += part.byteLength;
+        function updateTransferUI(prefix, doneBytes, totalBytes, startedAt) {
+            if (!totalBytes || totalBytes <= 0) return;
+            const bar = document.getElementById(prefix + 'Bar');
+            const speedEl = document.getElementById(prefix + 'Speed');
+            const etaEl = document.getElementById(prefix + 'Eta');
+
+            const percent = Math.min(100, (doneBytes / totalBytes) * 100);
+            bar.style.width = percent + '%';
+
+            const elapsed = Math.max(0.1, (performance.now() - startedAt) / 1000);
+            const speed = doneBytes / elapsed;
+            const leftBytes = Math.max(0, totalBytes - doneBytes);
+            const eta = speed > 0 ? leftBytes / speed : Infinity;
+
+            speedEl.innerText = `Tốc độ: ${formatSpeed(speed)}`;
+            etaEl.innerText = `Còn lại: ${formatTime(eta)}`;
+        }
+
+        function postSend(msg) {
+            document.getElementById('sendMsg').innerText = msg;
+        }
+
+        function postRecv(msg) {
+            document.getElementById('recvMsg').innerText = msg;
+        }
+
+        function resetSendUI() {
+            document.getElementById('sendBar').style.width = '0%';
+            document.getElementById('sendSpeed').innerText = 'Tốc độ: 0 KB/s';
+            document.getElementById('sendEta').innerText = 'Còn lại: --:--';
+        }
+
+        function resetRecvUI() {
+            document.getElementById('recvBar').style.width = '0%';
+            document.getElementById('recvSpeed').innerText = 'Tốc độ: 0 KB/s';
+            document.getElementById('recvEta').innerText = 'Còn lại: --:--';
+        }
+
+        function closeSocketQuietly(ws) {
+            if (!ws) return;
+            try { ws.close(); } catch (_) {}
+        }
+
+        function pumpSend() {
+            const s = sendState;
+            if (!s || !s.ws || s.ws.readyState !== WebSocket.OPEN) return;
+
+            while (s.credits > 0 && s.inFlight < MAX_IN_FLIGHT && s.offset < s.file.size) {
+                const end = Math.min(s.file.size, s.offset + CHUNK_SIZE);
+                const chunk = s.file.slice(s.offset, end);
+                s.ws.send(chunk);
+
+                const bytes = end - s.offset;
+                s.offset = end;
+                s.sentBytes += bytes;
+                s.inFlight++;
+                s.credits--;
+
+                updateTransferUI('send', s.sentBytes, s.file.size, s.startedAt);
             }
-            const hashBuffer = await crypto.subtle.digest('SHA-256', merged.buffer);
-            return toHex(hashBuffer);
+
+            if (s.offset >= s.file.size) {
+                document.getElementById('sendEta').innerText = 'Còn lại: 00:00';
+            }
         }
 
-        let inFlight = 0;
-        const MAX_IN_FLIGHT = 3;
-        const CHUNK_SIZE = 128 * 1024;
-        let offset = 0, startTime = 0, fileObj;
+        async function send() {
+            const file = document.getElementById('f').files[0];
+            const tid = document.getElementById('tid').value.trim();
+            if (!file || !tid) return alert('Thiếu thông tin');
 
-        function updateUI(currentBytes, totalSize) {
-            if (totalSize === 0) return;
-            const percent = (currentBytes / totalSize * 100);
-            document.getElementById('bar').style.width = Math.min(percent, 100) + '%';
+            closeSocketQuietly(sendState?.ws);
+            resetSendUI();
 
-            const now = performance.now();
-            const duration = Math.max(0.1, (now - startTime) / 1000);
-            const speed = currentBytes / duration;
-            const remainingBytes = Math.max(0, totalSize - currentBytes);
-            const eta = speed > 0 ? (remainingBytes / speed) : Infinity;
+            const ws = new WebSocket(`${host}?role=sender&tid=${encodeURIComponent(tid)}`);
+            sendState = {
+                ws,
+                file,
+                offset: 0,
+                sentBytes: 0,
+                ackedBytes: 0,
+                inFlight: 0,
+                credits: 0,
+                startedAt: 0,
+                fileHash: '',
+                hashSent: false
+            };
 
-            document.getElementById('speed').innerText = `Tốc độ: ${formatSpeed(speed)}`;
-            document.getElementById('eta').innerText = `Còn lại: ${formatTime(eta)}`;
-        }
+            ws.onopen = () => {
+                const s = sendState;
+                if (!s || s.ws !== ws) return;
 
-        function send() {
-            fileObj = document.getElementById('f').files[0];
-            const tid = document.getElementById('tid').value;
-            if (!fileObj || !tid) return alert("Thiếu thông tin");
+                s.startedAt = performance.now();
+                postSend('Đã kết nối. Chờ bên nhận sẵn sàng...');
 
-            ws = new WebSocket(`${host}?role=sender&tid=${tid}`);
-            ws.onopen = async () => {
-                document.getElementById('msg').innerText = "Đang tính hash...";
-                const fileHash = await hash(fileObj);
-                ws.send(JSON.stringify({ name: fileObj.name, size: fileObj.size, hash: fileHash }));
+                ws.send(JSON.stringify({
+                    type: 'meta',
+                    name: file.name,
+                    size: file.size,
+                    chunkSize: CHUNK_SIZE
+                }));
 
-                document.getElementById('msg').innerText = "Đang gửi...";
-                startTime = performance.now();
-                offset = 0;
-                inFlight = 0;
+                // Tính hash nền để không chặn upload.
+                hash(file).then((value) => {
+                    const cur = sendState;
+                    if (!cur || cur.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+                    cur.fileHash = value;
+                    ws.send(JSON.stringify({ type: 'hash', value }));
+                    cur.hashSent = true;
+                }).catch((err) => {
+                    postSend('Không tính được hash: ' + err.message);
+                });
             };
 
             ws.onmessage = (e) => {
-                if (e.data === "next") {
-                    inFlight = Math.max(0, inFlight - 1);
-                    sendNextChunk();
-                    updateUI(offset, fileObj.size);
+                const s = sendState;
+                if (!s || s.ws !== ws) return;
+                if (typeof e.data !== 'string') return;
+
+                let msg;
+                try { msg = JSON.parse(e.data); } catch (_) { return; }
+
+                if (msg.type === 'ready') {
+                    const windowSize = Math.max(1, Math.min(MAX_IN_FLIGHT, Number(msg.window) || MAX_IN_FLIGHT));
+                    s.credits += windowSize;
+                    postSend('Đang gửi liên tục...');
+                    pumpSend();
                     return;
                 }
 
-                if (typeof e.data === "string") {
-                    try {
-                        const msg = JSON.parse(e.data);
-                        if (msg.type === "done") {
-                            if (msg.ok) {
-                                document.getElementById('msg').innerText = "✅ Bên nhận đã xác thực hash thành công.";
-                            } else {
-                                document.getElementById('msg').innerText = `❌ Lệch hash! Sender: ${msg.expectedHash || "?"}, Receiver: ${msg.receivedHash || "?"}`;
-                            }
-                            document.getElementById('eta').innerText = "Còn lại: 00:00";
-                            ws.close();
-                        }
-                    } catch (_) {
-                        // Ignore non-JSON status text
+                if (msg.type === 'ack') {
+                    const bytes = Math.max(0, Number(msg.bytes) || 0);
+                    s.ackedBytes += bytes;
+                    s.inFlight = Math.max(0, s.inFlight - 1);
+                    s.credits += 1;
+                    pumpSend();
+                    return;
+                }
+
+                if (msg.type === 'recv_done') {
+                    if (msg.ok) {
+                        postSend('Hoàn tất: bên nhận lưu file và hash khớp.');
+                    } else {
+                        postSend(`Hoàn tất có lỗi hash. Sender: ${msg.expectedHash || '?'}, Receiver: ${msg.receivedHash || '?'}`);
                     }
+                    document.getElementById('sendEta').innerText = 'Còn lại: 00:00';
+                    closeSocketQuietly(ws);
                 }
             };
 
+            ws.onerror = () => postSend('Lỗi kết nối bên gửi.');
             ws.onclose = () => {
-                if (offset >= fileObj.size) {
-                    document.getElementById('msg').innerText += " (đã đóng kết nối)";
+                if (sendState && sendState.ws === ws) {
+                    sendState = null;
                 }
             };
         }
 
-        function sendNextChunk() {
-            if (offset < fileObj.size && inFlight < MAX_IN_FLIGHT) {
-                const chunk = fileObj.slice(offset, offset + CHUNK_SIZE);
-                ws.send(chunk);
-                offset += chunk.size;
-                inFlight++;
+        async function verifyAndNotifyIfReady() {
+            const r = recvState;
+            if (!r || r.hashVerified || !r.transferDone || !r.expectedHash) return;
+
+            r.hashVerified = true;
+            postRecv('Đang so hash...');
+
+            try {
+                const savedFile = await r.fileHandle.getFile();
+                const receivedHash = await hash(savedFile);
+                const expected = String(r.expectedHash).toLowerCase();
+                const ok = receivedHash === expected;
+
+                if (ok) {
+                    postRecv('Thành công: đã lưu file và hash khớp.');
+                } else {
+                    postRecv(`Đã lưu file nhưng lệch hash. Nhận: ${receivedHash}`);
+                }
+
+                if (r.ws.readyState === WebSocket.OPEN) {
+                    r.ws.send(JSON.stringify({
+                        type: 'recv_done',
+                        ok,
+                        expectedHash: expected,
+                        receivedHash,
+                        bytes: r.receivedBytes
+                    }));
+                    closeSocketQuietly(r.ws);
+                }
+            } catch (err) {
+                postRecv('Lỗi so hash: ' + err.message);
             }
         }
 
         async function receive() {
-            const tid = document.getElementById('tid').value;
-            if (!tid) return alert("Nhập mã Transfer ID trước");
+            const tid = document.getElementById('tid').value.trim();
+            if (!tid) return alert('Nhập mã Transfer ID trước');
 
-            try {
-                ws = new WebSocket(`${host}?role=receiver&tid=${tid}`);
-                ws.binaryType = "arraybuffer";
-                let meta, receivedBytes = 0, writable;
-                let isClosed = false;
-                const receivedChunks = [];
+            closeSocketQuietly(recvState?.ws);
+            resetRecvUI();
 
-                ws.onmessage = async (e) => {
-                    if (typeof e.data === "string") {
-                        let parsed;
-                        try {
-                            parsed = JSON.parse(e.data);
-                        } catch (_) {
-                            return;
-                        }
+            const ws = new WebSocket(`${host}?role=receiver&tid=${encodeURIComponent(tid)}`);
+            ws.binaryType = 'arraybuffer';
 
-                        if (!parsed || !parsed.name || !parsed.size) return;
-                        meta = parsed;
+            recvState = {
+                ws,
+                meta: null,
+                fileHandle: null,
+                writable: null,
+                writeChain: Promise.resolve(),
+                receivedBytes: 0,
+                startedAt: 0,
+                transferDone: false,
+                expectedHash: '',
+                hashVerified: false,
+                closingStarted: false
+            };
 
-                        const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
-                        writable = await handle.createWritable();
+            ws.onopen = () => postRecv('Đã kết nối. Đang chờ metadata...');
 
-                        document.getElementById('msg').innerText = "Đang nhận: " + meta.name;
-                        startTime = performance.now();
-                        ws.send("next");
-                    } else {
-                        const chunk = new Uint8Array(e.data);
-                        await writable.write(chunk);
-                        receivedChunks.push(chunk);
-                        receivedBytes += chunk.byteLength;
-                        updateUI(receivedBytes, meta.size);
+            ws.onmessage = async (e) => {
+                const r = recvState;
+                if (!r || r.ws !== ws) return;
 
-                        if (receivedBytes >= meta.size) {
-                            document.getElementById('msg').innerText = "Đang hoàn tất và đóng file...";
-                            await writable.close();
-                            isClosed = true;
-                            const receivedHash = await hashBuffers(receivedChunks, receivedBytes);
-                            const ok = !!meta.hash && (receivedHash === meta.hash.toLowerCase());
+                if (typeof e.data === 'string') {
+                    let msg;
+                    try { msg = JSON.parse(e.data); } catch (_) { return; }
 
-                            if (ok) {
-                                document.getElementById('msg').innerText = "✅ Thành công! File đã lưu và hash khớp.";
-                            } else {
-                                document.getElementById('msg').innerText = `❌ File đã lưu nhưng lệch hash. Nhận: ${receivedHash}`;
-                            }
+                    if (msg.type === 'meta') {
+                        r.meta = msg;
+                        r.fileHandle = await window.showSaveFilePicker({ suggestedName: msg.name });
+                        r.writable = await r.fileHandle.createWritable();
+                        r.startedAt = performance.now();
+                        postRecv('Đang nhận: ' + msg.name);
 
-                            ws.send(JSON.stringify({
-                                type: "done",
-                                ok,
-                                expectedHash: meta.hash || "",
-                                receivedHash
-                            }));
-
-                            document.getElementById('eta').innerText = "Còn lại: 00:00";
-                            ws.close();
-                        } else {
-                            ws.send("next");
-                        }
+                        ws.send(JSON.stringify({ type: 'ready', window: MAX_IN_FLIGHT }));
+                        return;
                     }
-                };
 
-                ws.onclose = async () => {
-                    if (writable && !isClosed) {
-                        await writable.close().catch(() => {});
+                    if (msg.type === 'hash') {
+                        r.expectedHash = String(msg.value || '').toLowerCase();
+                        await verifyAndNotifyIfReady();
+                        return;
                     }
-                };
-            } catch (err) {
-                document.getElementById('msg').innerText = "❌ Lỗi: " + err.message;
-            }
+
+                    return;
+                }
+
+                if (!r.meta || !r.writable || r.closingStarted) return;
+
+                const chunk = new Uint8Array(e.data);
+                r.receivedBytes += chunk.byteLength;
+                updateTransferUI('recv', r.receivedBytes, r.meta.size, r.startedAt);
+
+                // ACK ngay để giữ pipeline luôn đầy.
+                ws.send(JSON.stringify({ type: 'ack', bytes: chunk.byteLength }));
+
+                r.writeChain = r.writeChain.then(() => r.writable.write(chunk));
+
+                if (r.receivedBytes >= r.meta.size && !r.closingStarted) {
+                    r.closingStarted = true;
+                    document.getElementById('recvEta').innerText = 'Còn lại: 00:00';
+                    postRecv('Đã nhận đủ dữ liệu, đang đóng file...');
+
+                    await r.writeChain;
+                    await r.writable.close();
+                    r.transferDone = true;
+
+                    await verifyAndNotifyIfReady();
+                    if (!r.expectedHash) {
+                        postRecv('Đã nhận xong, đang chờ hash từ bên gửi để xác thực...');
+                    }
+                }
+            };
+
+            ws.onerror = () => postRecv('Lỗi kết nối bên nhận.');
+            ws.onclose = async () => {
+                const r = recvState;
+                if (r && r.ws === ws) {
+                    try {
+                        if (r.writable && !r.transferDone) {
+                            await r.writable.close();
+                        }
+                    } catch (_) {}
+                    recvState = null;
+                }
+            };
         }
     </script>
 </body>
