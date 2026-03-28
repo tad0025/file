@@ -213,6 +213,7 @@
                 <h4>Nhận File</h4>
                 <p class="hint">Bật chế độ chờ và chọn nơi lưu trên thiết bị.</p>
                 <button class="action-recv" onclick="receive()">Chế độ chờ nhận</button>
+                <button id="recvSaveBtn" onclick="confirmReceiveSave()" style="display:none; margin-top:8px;">Lưu File Này</button>
                 <div class="progress"><div class="bar" id="recvBar"></div></div>
                 <div class="stats">
                     <span id="recvSpeed">Tốc độ: 0 KB/s</span>
@@ -290,6 +291,8 @@
             document.getElementById('recvBar').style.width = '0%';
             document.getElementById('recvSpeed').innerText = 'Tốc độ: 0 KB/s';
             document.getElementById('recvEta').innerText = 'Còn lại: --:--';
+            document.getElementById('recvSaveBtn').style.display = 'none';
+            document.getElementById('recvSaveBtn').innerText = 'Lưu File Này';
         }
 
         function closeSocketQuietly(ws) {
@@ -446,6 +449,38 @@
             }
         }
 
+        async function openSavePickerForMeta(r) {
+            if (!r || !r.meta) return false;
+            try {
+                r.fileHandle = await window.showSaveFilePicker({
+                    suggestedName: r.meta.name || `relay-${Date.now()}.bin`
+                });
+                r.writable = await r.fileHandle.createWritable();
+                return true;
+            } catch (err) {
+                postRecv('Đã có tên file. Bấm "Lưu File Này" để chọn nơi lưu.');
+                const saveBtn = document.getElementById('recvSaveBtn');
+                saveBtn.style.display = 'block';
+                saveBtn.innerText = `Lưu: ${r.meta.name || 'relay.bin'}`;
+                return false;
+            }
+        }
+
+        async function confirmReceiveSave() {
+            const r = recvState;
+            if (!r || !r.meta || r.writable) return;
+
+            const ok = await openSavePickerForMeta(r);
+            if (!ok) return;
+
+            document.getElementById('recvSaveBtn').style.display = 'none';
+            r.startedAt = performance.now();
+            postRecv('Đang nhận: ' + r.meta.name);
+            if (r.ws.readyState === WebSocket.OPEN) {
+                r.ws.send(JSON.stringify({ type: 'ready', window: MAX_IN_FLIGHT }));
+            }
+        }
+
         async function receive() {
             const tid = document.getElementById('tid').value.trim();
             if (!tid) return alert('Nhập mã Transfer ID trước');
@@ -453,24 +488,13 @@
             closeSocketQuietly(recvState?.ws);
             resetRecvUI();
 
-            let preselectedFileHandle = null;
-            try {
-                // Chọn nơi lưu ngay tại click để luôn có user gesture (tránh kẹt khi metadata đến muộn).
-                preselectedFileHandle = await window.showSaveFilePicker({
-                    suggestedName: `relay-${tid}.bin`
-                });
-            } catch (err) {
-                postRecv('Bạn đã hủy chọn nơi lưu file.');
-                return;
-            }
-
             const ws = new WebSocket(`${host}?role=receiver&tid=${encodeURIComponent(tid)}`);
             ws.binaryType = 'arraybuffer';
 
             recvState = {
                 ws,
                 meta: null,
-                fileHandle: preselectedFileHandle,
+                fileHandle: null,
                 writable: null,
                 writeChain: Promise.resolve(),
                 receivedBytes: 0,
@@ -493,16 +517,12 @@
 
                     if (msg.type === 'meta') {
                         r.meta = msg;
-                        try {
-                            r.writable = await r.fileHandle.createWritable();
-                        } catch (err) {
-                            postRecv('Không mở được file để ghi: ' + err.message);
-                            closeSocketQuietly(ws);
-                            return;
-                        }
+                        postRecv('Đã nhận tên file: ' + msg.name);
+                        const ok = await openSavePickerForMeta(r);
+                        if (!ok) return;
+                        document.getElementById('recvSaveBtn').style.display = 'none';
                         r.startedAt = performance.now();
                         postRecv('Đang nhận: ' + msg.name);
-
                         ws.send(JSON.stringify({ type: 'ready', window: MAX_IN_FLIGHT }));
                         return;
                     }
