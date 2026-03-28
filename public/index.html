@@ -49,6 +49,7 @@
 
             ws = new WebSocket(`${host}?role=sender&tid=${tidVal}`);
             ws.onopen = async () => {
+                document.getElementById('msg').innerText = "Đang chờ người nhận...";
                 const fileHash = await hash(fileObj);
                 ws.send(JSON.stringify({ name: fileObj.name, size: fileObj.size, hash: fileHash }));
                 // Đẩy 3 chunk đầu tiên lên ngay lập tức để lấp đầy hàng đợi server
@@ -63,6 +64,14 @@
                     sendNextChunk(); // Gửi tiếp 1 chunk mới để lấp chỗ trống
                 }
             };
+
+            ws.onerror = () => {
+                document.getElementById('msg').innerText = "❌ Lỗi kết nối!";
+            };
+
+            ws.onclose = () => {
+                document.getElementById('msg').innerText = "Kết nối đã đóng.";
+            };
         }
 
         function sendNextChunk() {
@@ -75,32 +84,52 @@
             }
         }
 
-        function receive() {
+        async function receive() {
             const tid = document.getElementById('tid').value;
-            ws = new WebSocket(`${host}?role=receiver&tid=${tid}`);
-            let meta, chunks = [];
+            if (!tid) return alert("Nhập mã Transfer ID trước");
 
-            ws.onmessage = async (e) => {
-                if (typeof e.data === "string") {
-                    meta = JSON.parse(e.data);
-                    document.getElementById('msg').innerText = "Đang nhận: " + meta.name;
-                    ws.send("next"); // Gửi ACK đầu tiên
-                } else {
-                    chunks.push(e.data);
-                    const receivedSize = chunks.length * 128 * 1024;
-                    document.getElementById('bar').style.width = (receivedSize/meta.size*100) + '%';
-                    
-                    if (receivedSize >= meta.size) {
-                        const blob = new Blob(chunks);
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url; a.download = meta.name; a.click();
-                        document.getElementById('msg').innerText = "✅ Đã tải xong!";
+            try {
+                // 1. Mở hộp thoại lưu file trước khi kết nối (Yêu cầu quyền ghi của người dùng)
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: 'dang_tai_file', 
+                });
+                const writable = await handle.createWritable();
+
+                ws = new WebSocket(`${host}?role=receiver&tid=${tid}`);
+                let meta, receivedBytes = 0;
+
+                document.getElementById('msg').innerText = "Đang kết nối...";
+
+                ws.onmessage = async (e) => {
+                    if (typeof e.data === "string") {
+                        meta = JSON.parse(e.data);
+                        document.getElementById('msg').innerText = "Đang nhận trực tiếp xuống đĩa: " + meta.name;
+                        ws.send("next");
                     } else {
-                        ws.send("next"); // Gửi ACK để lấy chunk tiếp theo
+                        // 2. Ghi trực tiếp chunk dữ liệu vào file trên ổ đĩa
+                        await writable.write(e.data);
+                        
+                        receivedBytes += e.data.byteLength;
+                        document.getElementById('bar').style.width = (receivedBytes / meta.size * 100) + '%';
+
+                        if (receivedBytes >= meta.size) {
+                            // 3. Đóng luồng ghi sau khi hoàn tất
+                            await writable.close();
+                            document.getElementById('msg').innerText = "✅ Đã lưu trực tiếp vào máy!";
+                            // Lưu ý: Với file cực lớn, việc tính lại hash để đối soát sẽ tốn thời gian 
+                            // vì phải đọc lại file từ đĩa. Bạn có thể bỏ qua bước hash ở đây để tối ưu tốc độ.
+                        } else {
+                            ws.send("next");
+                        }
                     }
-                }
-            };
+                };
+
+                ws.onclose = () => { writable.close(); };
+
+            } catch (err) {
+                console.error("Lỗi FileSystem:", err);
+                document.getElementById('msg').innerText = "❌ Đã hủy hoặc trình duyệt không hỗ trợ FileSystem API";
+            }
         }
     </script>
 </body>
