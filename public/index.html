@@ -46,10 +46,25 @@
             return (h > 0 ? h + ":" : "") + (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
         }
 
+        function toHex(buffer) {
+            return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
         async function hash(file) {
             const buffer = await file.arrayBuffer();
             const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-            return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+            return toHex(hashBuffer);
+        }
+
+        async function hashBuffers(buffers, totalSize) {
+            const merged = new Uint8Array(totalSize);
+            let p = 0;
+            for (const part of buffers) {
+                merged.set(part, p);
+                p += part.byteLength;
+            }
+            const hashBuffer = await crypto.subtle.digest('SHA-256', merged.buffer);
+            return toHex(hashBuffer);
         }
 
         let inFlight = 0;
@@ -87,14 +102,37 @@
                 startTime = performance.now();
                 offset = 0;
                 inFlight = 0;
-                for (let i = 0; i < MAX_IN_FLIGHT; i++) sendNextChunk();
             };
 
             ws.onmessage = (e) => {
                 if (e.data === "next") {
-                    inFlight--;
+                    inFlight = Math.max(0, inFlight - 1);
                     sendNextChunk();
                     updateUI(offset, fileObj.size);
+                    return;
+                }
+
+                if (typeof e.data === "string") {
+                    try {
+                        const msg = JSON.parse(e.data);
+                        if (msg.type === "done") {
+                            if (msg.ok) {
+                                document.getElementById('msg').innerText = "✅ Bên nhận đã xác thực hash thành công.";
+                            } else {
+                                document.getElementById('msg').innerText = `❌ Lệch hash! Sender: ${msg.expectedHash || "?"}, Receiver: ${msg.receivedHash || "?"}`;
+                            }
+                            document.getElementById('eta').innerText = "Còn lại: 00:00";
+                            ws.close();
+                        }
+                    } catch (_) {
+                        // Ignore non-JSON status text
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                if (offset >= fileObj.size) {
+                    document.getElementById('msg').innerText += " (đã đóng kết nối)";
                 }
             };
         }
@@ -114,12 +152,22 @@
 
             try {
                 ws = new WebSocket(`${host}?role=receiver&tid=${tid}`);
+                ws.binaryType = "arraybuffer";
                 let meta, receivedBytes = 0, writable;
                 let isClosed = false;
+                const receivedChunks = [];
 
                 ws.onmessage = async (e) => {
                     if (typeof e.data === "string") {
-                        meta = JSON.parse(e.data);
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(e.data);
+                        } catch (_) {
+                            return;
+                        }
+
+                        if (!parsed || !parsed.name || !parsed.size) return;
+                        meta = parsed;
 
                         const handle = await window.showSaveFilePicker({ suggestedName: meta.name });
                         writable = await handle.createWritable();
@@ -128,16 +176,34 @@
                         startTime = performance.now();
                         ws.send("next");
                     } else {
-                        await writable.write(e.data);
-                        receivedBytes += e.data.byteLength;
+                        const chunk = new Uint8Array(e.data);
+                        await writable.write(chunk);
+                        receivedChunks.push(chunk);
+                        receivedBytes += chunk.byteLength;
                         updateUI(receivedBytes, meta.size);
 
                         if (receivedBytes >= meta.size) {
                             document.getElementById('msg').innerText = "Đang hoàn tất và đóng file...";
                             await writable.close();
                             isClosed = true;
-                            document.getElementById('msg').innerText = "✅ Thành công! File đã lưu.";
+                            const receivedHash = await hashBuffers(receivedChunks, receivedBytes);
+                            const ok = !!meta.hash && (receivedHash === meta.hash.toLowerCase());
+
+                            if (ok) {
+                                document.getElementById('msg').innerText = "✅ Thành công! File đã lưu và hash khớp.";
+                            } else {
+                                document.getElementById('msg').innerText = `❌ File đã lưu nhưng lệch hash. Nhận: ${receivedHash}`;
+                            }
+
+                            ws.send(JSON.stringify({
+                                type: "done",
+                                ok,
+                                expectedHash: meta.hash || "",
+                                receivedHash
+                            }));
+
                             document.getElementById('eta').innerText = "Còn lại: 00:00";
+                            ws.close();
                         } else {
                             ws.send("next");
                         }
