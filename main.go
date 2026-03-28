@@ -104,5 +104,9 @@ func main() {
 	http.HandleFunc("/ws", handleConnections)
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
+
+	// Thêm dòng này để sử dụng thư viện log
+	log.Println("Server đang chạy tại port: " + port)
+
 	http.ListenAndServe(":"+port, nil)
 }
