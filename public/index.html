@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Go Relay Transfer</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: sans-serif; max-width: 500px; margin: 50px auto; background: #f4f4f4; padding: 20px; }
+        .box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .progress { height: 10px; background: #eee; border-radius: 5px; margin: 15px 0; overflow: hidden; }
+        #bar { width: 0%; height: 100%; background: #007bff; transition: 0.1s; }
+        input, button { width: 100%; padding: 10px; margin: 5px 0; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h3>🚀 File Relay (Go)</h3>
+        <input type="text" id="tid" placeholder="Mã Transfer ID (VD: 123)">
+        <hr>
+        <h4>Gửi</h4>
+        <input type="file" id="f">
+        <button onclick="send()">Gửi File</button>
+        <hr>
+        <h4>Nhận</h4>
+        <button onclick="receive()" style="background: #28a745; color: white; border: none;">Chế độ chờ nhận</button>
+        <div class="progress"><div id="bar"></div></div>
+        <p id="msg" style="font-size: 12px; color: #666;"></p>
+    </div>
+
+    <script>
+        let ws;
+        const host = location.origin.replace(/^http/, 'ws') + '/ws';
+
+        async function hash(file) {
+            const buffer = await file.arrayBuffer();
+            const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+            return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function send() {
+            const file = document.getElementById('f').files[0];
+            const tid = document.getElementById('tid').value;
+            if(!file || !tid) return alert("Thiếu thông tin");
+
+            ws = new WebSocket(`${host}?role=sender&tid=${tid}`);
+            ws.onopen = async () => {
+                const fileHash = await hash(file);
+                // Gửi metadata đầu tiên
+                ws.send(JSON.stringify({ name: file.name, size: file.size, hash: fileHash }));
+            };
+
+            ws.onmessage = async (e) => {
+                if (e.data === "next") { // Nhận ACK từ receiver
+                    sendChunk();
+                }
+            };
+
+            let offset = 0;
+            const CHUNK_SIZE = 128 * 1024; // 128KB
+            function sendChunk() {
+                if (offset < file.size) {
+                    const chunk = file.slice(offset, offset + CHUNK_SIZE);
+                    ws.send(chunk);
+                    offset += CHUNK_SIZE;
+                    document.getElementById('bar').style.width = (offset/file.size*100) + '%';
+                }
+            }
+        }
+
+        function receive() {
+            const tid = document.getElementById('tid').value;
+            ws = new WebSocket(`${host}?role=receiver&tid=${tid}`);
+            let meta, chunks = [];
+
+            ws.onmessage = async (e) => {
+                if (typeof e.data === "string") {
+                    meta = JSON.parse(e.data);
+                    document.getElementById('msg').innerText = "Đang nhận: " + meta.name;
+                    ws.send("next"); // Gửi ACK đầu tiên
+                } else {
+                    chunks.push(e.data);
+                    const receivedSize = chunks.length * 128 * 1024;
+                    document.getElementById('bar').style.width = (receivedSize/meta.size*100) + '%';
+                    
+                    if (receivedSize >= meta.size) {
+                        const blob = new Blob(chunks);
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = meta.name; a.click();
+                        document.getElementById('msg').innerText = "✅ Đã tải xong!";
+                    } else {
+                        ws.send("next"); // Gửi ACK để lấy chunk tiếp theo
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+</html>
