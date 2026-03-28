@@ -1,10 +1,11 @@
 package main
 
 import (
-	"log"
+	"log" // Đã sử dụng để tránh lỗi build
 	"net/http"
 	"os"
 	"sync"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -16,7 +17,7 @@ type Room struct {
 	Sender     *websocket.Conn
 	Receiver   *websocket.Conn
 	ChunkQueue chan []byte
-	Metadata   []byte // Lưu trữ Metadata (tên file, size, hash)
+	Metadata   []byte
 	mu         sync.Mutex
 }
 
@@ -27,56 +28,61 @@ var (
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	role := r.URL.Query().Get("role")
 	tid := r.URL.Query().Get("tid")
 
 	mapMu.Lock()
 	if _, ok := rooms[tid]; !ok {
-		rooms[tid] = &Room{ ChunkQueue: make(chan []byte, 3) }
+		rooms[tid] = &Room{ChunkQueue: make(chan []byte, 10)} // Tăng lên 10 để mượt hơn
 	}
 	room := rooms[tid]
 	mapMu.Unlock()
 
+	// Ghi log để theo dõi trên Render
+	log.Printf("Phòng %s: %s đã tham gia", tid, role)
+
 	defer func() {
-		mapMu.Lock()
-		room, ok := rooms[tid]
-		if ok {
-			room.mu.Lock()
-			if role == "sender" { room.Sender = nil }
-			if role == "receiver" { room.Receiver = nil }
-			// Chỉ xóa khi cả 2 đều đã thoát
-			if room.Sender == nil && room.Receiver == nil {
-				close(room.ChunkQueue) // Đóng channel để giải phóng tài nguyên
-				delete(rooms, tid)
-			}
-			room.mu.Unlock()
+		room.mu.Lock()
+		if role == "sender" {
+			room.Sender = nil
+		} else {
+			room.Receiver = nil
 		}
-		mapMu.Unlock()
+
+		if room.Sender == nil && room.Receiver == nil {
+			mapMu.Lock()
+			delete(rooms, tid)
+			mapMu.Unlock()
+		}
+		room.mu.Unlock()
 		ws.Close()
+		log.Printf("Phòng %s: %s đã thoát", tid, role)
 	}()
 
 	if role == "sender" {
 		room.Sender = ws
 		for {
 			mt, message, err := ws.ReadMessage()
-			if err != nil { break }
+			if err != nil {
+				break
+			}
 			if mt == websocket.BinaryMessage {
 				room.ChunkQueue <- message
 			} else {
-				// Lưu Metadata vào phòng để người nhận vào sau vẫn thấy
 				room.mu.Lock()
 				room.Metadata = message
 				if room.Receiver != nil {
-					room.Receiver.WriteMessage(mt, message)
+					room.Receiver.WriteMessage(websocket.TextMessage, message)
 				}
 				room.mu.Unlock()
 			}
 		}
 	} else {
 		room.Receiver = ws
-		// Nếu người gửi đã gửi Metadata trước đó, gửi ngay cho người nhận vừa vào
 		room.mu.Lock()
 		if room.Metadata != nil {
 			room.Receiver.WriteMessage(websocket.TextMessage, room.Metadata)
@@ -85,28 +91,36 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			for msg := range room.ChunkQueue {
-				room.Receiver.WriteMessage(websocket.BinaryMessage, msg)
+				if room.Receiver != nil {
+					if err := room.Receiver.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+						return
+					}
+				}
 			}
 		}()
+
 		for {
 			mt, message, err := ws.ReadMessage()
-			if err != nil { break }
+			if err != nil {
+				break
+			}
 			room.mu.Lock()
-			if room.Sender != nil { room.Sender.WriteMessage(mt, message) }
+			if room.Sender != nil {
+				room.Sender.WriteMessage(mt, message)
+			}
 			room.mu.Unlock()
 		}
 	}
-    // Lưu ý: Chỉ nên xóa room khi cả hai cùng thoát để tránh mất dữ liệu giữa chừng
 }
 
 func main() {
 	http.Handle("/", http.FileServer(http.Dir("./public")))
 	http.HandleFunc("/ws", handleConnections)
 	port := os.Getenv("PORT")
-	if port == "" { port = "8080" }
+	if port == "" {
+		port = "8080"
+	}
 
-	// Thêm dòng này để sử dụng thư viện log
 	log.Println("Server đang chạy tại port: " + port)
-
-	http.ListenAndServe(":"+port, nil)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
