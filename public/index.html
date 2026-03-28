@@ -453,13 +453,24 @@
             closeSocketQuietly(recvState?.ws);
             resetRecvUI();
 
+            let preselectedFileHandle = null;
+            try {
+                // Chọn nơi lưu ngay tại click để luôn có user gesture (tránh kẹt khi metadata đến muộn).
+                preselectedFileHandle = await window.showSaveFilePicker({
+                    suggestedName: `relay-${tid}.bin`
+                });
+            } catch (err) {
+                postRecv('Bạn đã hủy chọn nơi lưu file.');
+                return;
+            }
+
             const ws = new WebSocket(`${host}?role=receiver&tid=${encodeURIComponent(tid)}`);
             ws.binaryType = 'arraybuffer';
 
             recvState = {
                 ws,
                 meta: null,
-                fileHandle: null,
+                fileHandle: preselectedFileHandle,
                 writable: null,
                 writeChain: Promise.resolve(),
                 receivedBytes: 0,
@@ -482,8 +493,13 @@
 
                     if (msg.type === 'meta') {
                         r.meta = msg;
-                        r.fileHandle = await window.showSaveFilePicker({ suggestedName: msg.name });
-                        r.writable = await r.fileHandle.createWritable();
+                        try {
+                            r.writable = await r.fileHandle.createWritable();
+                        } catch (err) {
+                            postRecv('Không mở được file để ghi: ' + err.message);
+                            closeSocketQuietly(ws);
+                            return;
+                        }
                         r.startedAt = performance.now();
                         postRecv('Đang nhận: ' + msg.name);
 

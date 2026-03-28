@@ -30,6 +30,7 @@ type Room struct {
 	Sender    *Peer
 	Receiver  *Peer
 	Metadata  []byte
+	Hash      []byte
 	ChunkQueue chan []byte
 
 	mu     sync.Mutex
@@ -109,11 +110,15 @@ func (r *Room) setSender(peer *Peer) {
 
 func (r *Room) setReceiver(peer *Peer) {
 	var meta []byte
+	var hash []byte
 
 	r.mu.Lock()
 	r.Receiver = peer
 	if len(r.Metadata) > 0 {
 		meta = append([]byte(nil), r.Metadata...)
+	}
+	if len(r.Hash) > 0 {
+		hash = append([]byte(nil), r.Hash...)
 	}
 	r.cond.Broadcast()
 	r.mu.Unlock()
@@ -123,11 +128,22 @@ func (r *Room) setReceiver(peer *Peer) {
 			log.Printf("Gửi metadata cho receiver lỗi: %v", err)
 		}
 	}
+	if len(hash) > 0 {
+		if err := peer.WriteMessage(websocket.TextMessage, hash); err != nil {
+			log.Printf("Gửi hash cho receiver lỗi: %v", err)
+		}
+	}
 }
 
 func (r *Room) setMetadata(metadata []byte) {
 	r.mu.Lock()
 	r.Metadata = append([]byte(nil), metadata...)
+	r.mu.Unlock()
+}
+
+func (r *Room) setHash(hash []byte) {
+	r.mu.Lock()
+	r.Hash = append([]byte(nil), hash...)
 	r.mu.Unlock()
 }
 
@@ -236,8 +252,11 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			case websocket.TextMessage:
-				if isMetaMessage(message) {
+				switch parseSignalType(message) {
+				case "meta":
 					room.setMetadata(message)
+				case "hash":
+					room.setHash(message)
 				}
 				_ = room.forwardToReceiver(websocket.TextMessage, message)
 			}
@@ -255,12 +274,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func isMetaMessage(payload []byte) bool {
+func parseSignalType(payload []byte) string {
 	var signal SignalMessage
 	if err := json.Unmarshal(payload, &signal); err != nil {
-		return false
+		return ""
 	}
-	return signal.Type == "meta"
+	return signal.Type
 }
 
 func main() {
