@@ -15,22 +15,67 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-type Peer struct {
-	Conn *websocket.Conn
-	mu   sync.Mutex
+var errPeerClosed = errors.New("peer đã đóng")
+
+type outboundMessage struct {
+	mt      int
+	payload []byte
 }
 
-func (p *Peer) WriteMessage(mt int, payload []byte) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.Conn.WriteMessage(mt, payload)
+type Peer struct {
+	Conn      *websocket.Conn
+	sendQueue chan outboundMessage
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newPeer(conn *websocket.Conn) *Peer {
+	p := &Peer{
+		Conn:      conn,
+		sendQueue: make(chan outboundMessage, 64),
+		done:      make(chan struct{}),
+	}
+	go p.writePump()
+	return p
+}
+
+func (p *Peer) writePump() {
+	for {
+		select {
+		case <-p.done:
+			return
+		case msg := <-p.sendQueue:
+			if err := p.Conn.WriteMessage(msg.mt, msg.payload); err != nil {
+				p.Close()
+				return
+			}
+		}
+	}
+}
+
+func (p *Peer) Send(mt int, payload []byte) error {
+	payloadCopy := append([]byte(nil), payload...)
+
+	select {
+	case <-p.done:
+		return errPeerClosed
+	case p.sendQueue <- outboundMessage{mt: mt, payload: payloadCopy}:
+		return nil
+	}
+}
+
+func (p *Peer) Close() {
+	p.closeOnce.Do(func() {
+		close(p.done)
+		_ = p.Conn.Close()
+	})
 }
 
 type Room struct {
-	Sender    *Peer
-	Receiver  *Peer
-	Metadata  []byte
-	Hash      []byte
+	Sender     *Peer
+	Receiver   *Peer
+	Metadata   []byte
+	Hash       []byte
 	ChunkQueue chan []byte
 
 	mu     sync.Mutex
@@ -74,8 +119,8 @@ func (r *Room) forwardChunks() {
 					return
 				}
 
-				if err := receiver.WriteMessage(websocket.BinaryMessage, chunk); err != nil {
-					log.Printf("Receiver write lỗi, chờ receiver mới: %v", err)
+				if err := receiver.Send(websocket.BinaryMessage, chunk); err != nil {
+					log.Printf("Receiver send lỗi, chờ receiver mới: %v", err)
 					r.mu.Lock()
 					if r.Receiver == receiver {
 						r.Receiver = nil
@@ -124,12 +169,12 @@ func (r *Room) setReceiver(peer *Peer) {
 	r.mu.Unlock()
 
 	if len(meta) > 0 {
-		if err := peer.WriteMessage(websocket.TextMessage, meta); err != nil {
+		if err := peer.Send(websocket.TextMessage, meta); err != nil {
 			log.Printf("Gửi metadata cho receiver lỗi: %v", err)
 		}
 	}
 	if len(hash) > 0 {
-		if err := peer.WriteMessage(websocket.TextMessage, hash); err != nil {
+		if err := peer.Send(websocket.TextMessage, hash); err != nil {
 			log.Printf("Gửi hash cho receiver lỗi: %v", err)
 		}
 	}
@@ -165,7 +210,7 @@ func (r *Room) forwardToSender(mt int, payload []byte) error {
 	if sender == nil {
 		return errors.New("sender chưa kết nối")
 	}
-	return sender.WriteMessage(mt, payload)
+	return sender.Send(mt, payload)
 }
 
 func (r *Room) forwardToReceiver(mt int, payload []byte) error {
@@ -176,7 +221,7 @@ func (r *Room) forwardToReceiver(mt int, payload []byte) error {
 	if receiver == nil {
 		return errors.New("receiver chưa kết nối")
 	}
-	return receiver.WriteMessage(mt, payload)
+	return receiver.Send(mt, payload)
 }
 
 func (r *Room) detach(role string) bool {
@@ -224,7 +269,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	room := rooms[tid]
 	mapMu.Unlock()
 
-	peer := &Peer{Conn: ws}
+	peer := newPeer(ws)
 	log.Printf("Phòng %s: %s đã tham gia", tid, role)
 
 	defer func() {
@@ -234,7 +279,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			delete(rooms, tid)
 			mapMu.Unlock()
 		}
-		ws.Close()
+		peer.Close()
 		log.Printf("Phòng %s: %s đã thoát", tid, role)
 	}()
 
