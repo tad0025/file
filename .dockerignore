@@ -1,0 +1,13 @@
+﻿.git
+.gitignore
+.vscode
+.idea
+*.log
+*.tmp
+*.swp
+*.swo
+Dockerfile*
+docker-compose*.yml
+README*
+**/*.md
+relay-project
