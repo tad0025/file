@@ -3,9 +3,6 @@
 FROM golang:1.21-alpine AS builder
 WORKDIR /src
 
-# Cài cert/git để tải module ổn định trên alpine.
-RUN apk add --no-cache ca-certificates git
-
 # Tận dụng cache layer cho dependencies.
 COPY go.mod go.sum* ./
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -19,7 +16,7 @@ COPY public ./public
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w -buildid=" -o /out/server ./main.go
+    go build -mod=mod -trimpath -ldflags="-s -w -buildid=" -o /out/server ./main.go
 
 # Runtime siêu nhẹ, không shell, chạy non-root.
 FROM gcr.io/distroless/static-debian12:nonroot
