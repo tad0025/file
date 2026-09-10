@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Xử lý đổi độ phân giải giữ nguyên currentTime
+    // Xử lý đổi độ phân giải giữ nguyên currentTime và tự động phát tiếp
     qualitySelect.addEventListener('change', () => {
         const newQualityId = qualitySelect.value;
         const currentTime = player.currentTime() || 0;
@@ -89,21 +89,24 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('[Player] Switching quality to ID:', newQualityId, 'at second:', currentTime);
 
         player.error(null);
-        player.pause();
         player.src({
             src: getStreamURL(newQualityId),
             type: 'video/mp4'
         });
-        player.load();
 
         player.one('loadedmetadata', () => {
             if (currentTime > 0) {
                 player.currentTime(currentTime);
             }
-            if (wasPlaying) {
-                player.play().catch(e => console.log('[Player] Autoplay prevented:', e));
-            }
         });
+
+        // Kích hoạt play ngay trong sự kiện user click để browser không chặn autoplay
+        if (wasPlaying || true) {
+            const playPromise = player.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(e => console.log('[Player] Play deferred:', e));
+            }
+        }
     });
 });
 </script>
