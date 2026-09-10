@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +21,52 @@ import (
 	"videostream/internal/telegram"
 )
 
+// UploadState lưu trạng thái checkpoint phục hồi khi cúp điện / tắt máy ngang
+type UploadState struct {
+	VideoID   int64                    `json:"video_id"`
+	Title     string                   `json:"title"`
+	Qualities map[string]*QualityState `json:"qualities"`
+}
+
+type QualityState struct {
+	QualityID int64              `json:"quality_id"`
+	TotalSize int64              `json:"total_size"`
+	Done      bool               `json:"done"`
+	Parts     map[int]*PartState `json:"parts"`
+}
+
+type PartState struct {
+	PartOrder         int    `json:"part_order"`
+	FileID            int64  `json:"file_id"`
+	StartByte         int64  `json:"start_byte"`
+	EndByte           int64  `json:"end_byte"`
+	PartSize          int64  `json:"part_size"`
+	IV                string `json:"iv"`
+	LastUploadedChunk int    `json:"last_uploaded_chunk"`
+	TgMessageID       int64  `json:"tg_message_id"`
+	Done              bool   `json:"done"`
+}
+
+func loadState(path string) (*UploadState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var state UploadState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func saveState(path string, state *UploadState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
 func main() {
 	filePathFlag := flag.String("file", "", "Đường dẫn tới file video gốc (Tùy chọn)")
 	titleFlag := flag.String("title", "", "Tiêu đề hiển thị cho video (Tùy chọn)")
@@ -26,7 +74,7 @@ func main() {
 	flag.Parse()
 
 	log.Println("==================================================")
-	log.Println("TeleStream Console Video Uploader & Transcoder")
+	log.Println("TeleStream Video Uploader (Checkpoint & Auto-Resume)")
 	log.Println("==================================================")
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -40,7 +88,6 @@ func main() {
 		}
 	}
 
-	// Loại bỏ dấu nháy kép hoặc đơn do Windows tự thêm khi kéo thả đường dẫn
 	resolvedPath = strings.Trim(resolvedPath, "\"'")
 
 	if resolvedPath == "" {
@@ -93,7 +140,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// 4. Khởi tạo thư mục transcode NGAY TẠI VỊ TRÍ FILE GỐC
+	// 4. Khởi tạo thư mục transcode tại vị trí file gốc
 	videoDir := filepath.Dir(absPath)
 	baseName := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
 	transcodeDir := filepath.Join(videoDir, baseName+"_transcoded")
@@ -108,14 +155,25 @@ func main() {
 		}
 	}()
 
-	// 5. Transcode 3 phiên bản độ phân giải (1080p, 720p) lưu ngay tại thư mục đó
-	log.Println("[FFmpeg] Bắt đầu chuẩn hóa độ phân giải (original, 1080p, 720p)...")
+	// Đọc checkpoint state nếu có
+	statePath := filepath.Join(transcodeDir, ".upload_state.json")
+	state, _ := loadState(statePath)
+	if state != nil {
+		log.Printf("[Checkpoint] Phát hiện tiến trình dở dang trước đó (Video ID: %d). Sẽ tiếp tục upload từ điểm bị ngắt!", state.VideoID)
+	} else {
+		state = &UploadState{
+			Title:     videoTitle,
+			Qualities: make(map[string]*QualityState),
+		}
+	}
+
+	// 5. Transcode các phiên bản độ phân giải (Tự động bỏ qua nếu file đã tồn tại)
+	log.Println("[FFmpeg] Kiểm tra & chuẩn hóa độ phân giải (original, 1080p, 720p)...")
 	transcodedFiles, err := ffmpeg.TranscodeAll(absPath, transcodeDir)
 	if err != nil {
 		log.Fatalf("Transcode video thất bại: %v", err)
 	}
 
-	log.Println("[FFmpeg] Hoàn tất chuẩn hóa video:")
 	for q, fPath := range transcodedFiles {
 		fStat, _ := os.Stat(fPath)
 		var sz int64
@@ -135,16 +193,21 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Chạy quy trình upload bên trong Run loop của gotd
 	err = tgClient.Run(ctx, func(uploadCtx context.Context) error {
 		time.Sleep(2 * time.Second)
 
-		// Tạo bản ghi Video trong MySQL
-		videoID, err := db.CreateVideo(videoTitle)
-		if err != nil {
-			return fmt.Errorf("create video in db: %w", err)
+		// Nếu chưa có VideoID trong state, tạo mới trong MySQL
+		if state.VideoID == 0 {
+			videoID, err := db.CreateVideo(videoTitle)
+			if err != nil {
+				return fmt.Errorf("create video in db: %w", err)
+			}
+			state.VideoID = videoID
+			_ = saveState(statePath, state)
+			log.Printf("[Database] Đã tạo Video ID mới: %d", videoID)
+		} else {
+			log.Printf("[Database] Dùng lại Video ID từ checkpoint: %d", state.VideoID)
 		}
-		log.Printf("[Database] Đã tạo Video ID: %d trong MySQL", videoID)
 
 		qualityOrder := []string{"original", "1080p", "720p"}
 
@@ -154,29 +217,47 @@ func main() {
 				continue
 			}
 
+			qState, exists := state.Qualities[q]
+			if !exists {
+				qState = &QualityState{
+					Parts: make(map[int]*PartState),
+				}
+				state.Qualities[q] = qState
+			}
+
+			if qState.Done {
+				log.Printf("[Checkpoint] Bản '%s' đã hoàn thành upload trước đó, bỏ qua.", q)
+				continue
+			}
+
 			qStat, err := os.Stat(qFilePath)
 			if err != nil {
 				return fmt.Errorf("stat file %s: %w", qFilePath, err)
 			}
 			qTotalSize := qStat.Size()
+			qState.TotalSize = qTotalSize
 
-			const maxPartBytes = int64(2000000000) // 2GB ngưỡng Telegram
+			const maxPartBytes = int64(2000000000) // 2GB
 			isMultiPart := qTotalSize > maxPartBytes
 
-			vq := &database.VideoQuality{
-				VideoID:     videoID,
-				Quality:     q,
-				FileName:    filepath.Base(qFilePath),
-				MimeType:    "video/mp4",
-				TotalSize:   qTotalSize,
-				IsMultiPart: isMultiPart,
+			// Tạo Quality trong DB nếu chưa có
+			if qState.QualityID == 0 {
+				vq := &database.VideoQuality{
+					VideoID:     state.VideoID,
+					Quality:     q,
+					FileName:    filepath.Base(qFilePath),
+					MimeType:    "video/mp4",
+					TotalSize:   qTotalSize,
+					IsMultiPart: isMultiPart,
+				}
+				qualityID, err := db.CreateQuality(vq)
+				if err != nil {
+					return fmt.Errorf("create quality in db: %w", err)
+				}
+				qState.QualityID = qualityID
+				_ = saveState(statePath, state)
+				log.Printf("[Database] Đã tạo Quality '%s' (ID: %d)", q, qualityID)
 			}
-
-			qualityID, err := db.CreateQuality(vq)
-			if err != nil {
-				return fmt.Errorf("create quality in db: %w", err)
-			}
-			log.Printf("[Database] Đã tạo bản '%s' (ID: %d, %d MB)", q, qualityID, qTotalSize/(1024*1024))
 
 			file, err := os.Open(qFilePath)
 			if err != nil {
@@ -195,97 +276,163 @@ func main() {
 				startByte := offset
 				endByte := offset + partBytes - 1
 
-				ivBytes, ivHex, err := crypto.GenerateIV()
-				if err != nil {
-					file.Close()
-					return fmt.Errorf("generate IV: %w", err)
+				pState, exists := qState.Parts[partOrder]
+				if !exists {
+					pState = &PartState{
+						PartOrder:         partOrder,
+						StartByte:         startByte,
+						EndByte:           endByte,
+						PartSize:          partBytes,
+						LastUploadedChunk: -1,
+					}
+					qState.Parts[partOrder] = pState
 				}
 
-				// File mã hóa tạm
+				if pState.Done {
+					log.Printf("[Checkpoint] [%s Part %d] Đã hoàn thành (Telegram Msg %d), bỏ qua.", q, partOrder, pState.TgMessageID)
+					offset += partBytes
+					partOrder++
+					continue
+				}
+
+				// Sinh hoặc lấy lại IV
+				var ivBytes []byte
+				if pState.IV == "" {
+					var ivHex string
+					ivBytes, ivHex, err = crypto.GenerateIV()
+					if err != nil {
+						file.Close()
+						return fmt.Errorf("generate IV: %w", err)
+					}
+					pState.IV = ivHex
+					_ = saveState(statePath, state)
+				} else {
+					ivBytes, _ = hex.DecodeString(pState.IV)
+				}
+
+				// File mã hóa tạm cho part này
 				encPartPath := filepath.Join(transcodeDir, fmt.Sprintf("%s_part%d.enc", q, partOrder))
-				encFile, err := os.Create(encPartPath)
-				if err != nil {
-					file.Close()
-					return fmt.Errorf("create enc file: %w", err)
-				}
-
-				log.Printf("[%s Part %d] Đang mã hóa AES-256-CTR...", q, partOrder)
-
-				stream, err := crypto.NewSeekableCTR(cfg.AESSecretKey, ivBytes, 0)
-				if err != nil {
-					encFile.Close()
-					file.Close()
-					return fmt.Errorf("NewSeekableCTR: %w", err)
-				}
-
-				partReader := io.LimitReader(file, partBytes)
-				buf := make([]byte, 512*1024)
-				for {
-					n, rErr := partReader.Read(buf)
-					if n > 0 {
-						stream.XORKeyStream(buf[:n], buf[:n])
-						if _, wErr := encFile.Write(buf[:n]); wErr != nil {
-							encFile.Close()
-							file.Close()
-							return fmt.Errorf("write enc file: %w", wErr)
-						}
+				
+				// Nếu file mã hóa chưa có, tạo mới
+				if _, err := os.Stat(encPartPath); os.IsNotExist(err) {
+					encFile, err := os.Create(encPartPath)
+					if err != nil {
+						file.Close()
+						return fmt.Errorf("create enc file: %w", err)
 					}
-					if rErr == io.EOF {
-						break
-					}
-					if rErr != nil {
+
+					log.Printf("[%s Part %d] Đang mã hóa AES-256-CTR...", q, partOrder)
+
+					stream, err := crypto.NewSeekableCTR(cfg.AESSecretKey, ivBytes, 0)
+					if err != nil {
 						encFile.Close()
 						file.Close()
-						return fmt.Errorf("read partReader: %w", rErr)
+						return fmt.Errorf("NewSeekableCTR: %w", err)
 					}
-				}
-				encFile.Close()
 
-				// Upload file mã hóa lên Telegram
-				log.Printf("[%s Part %d] Đang tải file mã hóa lên Telegram Channel...", q, partOrder)
-				msgID, actualSize, err := tgClient.UploadEncryptedPart(uploadCtx, encPartPath, func(uploaded, total int64) {
-					pct := float64(uploaded) * 100.0 / float64(total)
-					mbUploaded := float64(uploaded) / (1024 * 1024)
-					mbTotal := float64(total) / (1024 * 1024)
-					fmt.Printf("\r  -> Tiến độ Upload: %.1f%% (%.1f / %.1f MB)", pct, mbUploaded, mbTotal)
-				})
+					if _, err := file.Seek(offset, io.SeekStart); err != nil {
+						encFile.Close()
+						file.Close()
+						return fmt.Errorf("seek source file: %w", err)
+					}
+
+					partReader := io.LimitReader(file, partBytes)
+					buf := make([]byte, 512*1024)
+					for {
+						n, rErr := partReader.Read(buf)
+						if n > 0 {
+							stream.XORKeyStream(buf[:n], buf[:n])
+							if _, wErr := encFile.Write(buf[:n]); wErr != nil {
+								encFile.Close()
+								file.Close()
+								return fmt.Errorf("write enc file: %w", wErr)
+							}
+						}
+						if rErr == io.EOF {
+							break
+						}
+						if rErr != nil {
+							encFile.Close()
+							file.Close()
+							return fmt.Errorf("read partReader: %w", rErr)
+						}
+					}
+					encFile.Close()
+				}
+
+				// Xác định chunk bắt đầu upload
+				startChunk := pState.LastUploadedChunk + 1
+				if startChunk < 0 {
+					startChunk = 0
+				}
+
+				// Upload với tính năng Resume và Auto-Retry
+				msgID, actualSize, err := tgClient.UploadEncryptedPartResume(
+					uploadCtx,
+					encPartPath,
+					pState.FileID,
+					startChunk,
+					func(chunkIndex int, uploaded, total int64) {
+						pct := float64(uploaded) * 100.0 / float64(total)
+						mbUploaded := float64(uploaded) / (1024 * 1024)
+						mbTotal := float64(total) / (1024 * 1024)
+						fmt.Printf("\r  -> [%s Part %d] Tiến độ: %.1f%% (%.1f / %.1f MB)", q, partOrder, pct, mbUploaded, mbTotal)
+
+						// Lưu checkpoint mỗi 10 chunks
+						pState.LastUploadedChunk = chunkIndex
+						if chunkIndex%10 == 0 {
+							_ = saveState(statePath, state)
+						}
+					},
+				)
 				fmt.Println()
 
 				if err != nil {
 					file.Close()
-					return fmt.Errorf("UploadEncryptedPart: %w", err)
+					return fmt.Errorf("UploadEncryptedPartResume: %w", err)
 				}
 
-				// Xóa file mã hóa ngay sau khi upload xong để giải phóng đĩa
+				// Xóa file mã hóa ngay sau khi upload xong
 				_ = os.Remove(encPartPath)
 
-				// Ghi vào MySQL
+				// Ghi nhận vào MySQL
 				part := &database.VideoPart{
-					QualityID:   qualityID,
+					QualityID:   qState.QualityID,
 					PartOrder:   partOrder,
 					TgChatID:    cfg.TgChannelID,
 					TgMessageID: msgID,
 					PartSize:    actualSize,
 					StartByte:   startByte,
 					EndByte:     endByte,
-					IV:          ivHex,
+					IV:          pState.IV,
 				}
 				if _, err := db.CreatePart(part); err != nil {
 					file.Close()
 					return fmt.Errorf("create part in db: %w", err)
 				}
+
+				pState.TgMessageID = msgID
+				pState.PartSize = actualSize
+				pState.Done = true
+				_ = saveState(statePath, state)
 				log.Printf("[Database] Đã lưu Part %d -> Telegram Msg ID: %d", partOrder, msgID)
 
 				offset += partBytes
 				partOrder++
 			}
 			file.Close()
+
+			qState.Done = true
+			_ = saveState(statePath, state)
 		}
 
+		// Xóa file checkpoint khi toàn bộ các bản đã hoàn tất
+		_ = os.Remove(statePath)
+
 		log.Println("==================================================")
-		log.Printf("UPLOAD HOÀN TẤT THÀNH CÔNG!")
-		log.Printf("Video: \"%s\" (ID: %d)", videoTitle, videoID)
-		log.Printf("Xem trên Web Back4App: https://videostreamtele1-tuciuxxx.b4a.run/watch/%d", videoID)
+		log.Printf("TẤT CẢ CÁC BẢN ĐÃ UPLOAD THÀNH CÔNG!")
+		log.Printf("Video ID: %d - \"%s\"", state.VideoID, videoTitle)
+		log.Printf("Xem trên Web Back4App: https://videostreamtele1-tuciuxxx.b4a.run/watch/%d", state.VideoID)
 		log.Println("==================================================")
 		return nil
 	})

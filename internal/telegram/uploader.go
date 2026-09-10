@@ -9,14 +9,31 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gotd/td/tg"
 )
 
 type ProgressFunc func(uploadedBytes, totalBytes int64)
+type ChunkSuccessFunc func(chunkIndex int, uploadedBytes, totalBytes int64)
 
-// UploadEncryptedPart upload một file đã mã hóa (.enc) lên Telegram Channel dưới dạng InputFileBig
+// UploadEncryptedPart giữ tính tương thích ngược cho hàm gọi thông thường
 func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progress ProgressFunc) (int64, int64, error) {
+	return c.UploadEncryptedPartResume(ctx, filePath, 0, 0, func(chunkIndex int, uploadedBytes, totalBytes int64) {
+		if progress != nil {
+			progress(uploadedBytes, totalBytes)
+		}
+	})
+}
+
+// UploadEncryptedPartResume upload file đã mã hóa (.enc) lên Telegram có hỗ trợ Resume và Auto-Retry khi rớt mạng
+func (c *Client) UploadEncryptedPartResume(
+	ctx context.Context,
+	filePath string,
+	existingFileID int64,
+	startChunk int,
+	onChunkSuccess ChunkSuccessFunc,
+) (int64, int64, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("open file %s: %w", filePath, err)
@@ -29,11 +46,14 @@ func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progr
 	}
 	fileSize := stat.Size()
 
-	n, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-	if err != nil {
-		return 0, 0, err
+	fileID := existingFileID
+	if fileID == 0 {
+		n, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+		if err != nil {
+			return 0, 0, err
+		}
+		fileID = n.Int64()
 	}
-	fileID := n.Int64()
 
 	chunkSize := c.cfg.ChunkSize
 	if chunkSize <= 0 {
@@ -42,11 +62,22 @@ func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progr
 
 	totalParts := int((fileSize + int64(chunkSize) - 1) / int64(chunkSize))
 	buf := make([]byte, chunkSize)
-	var uploaded int64
 
-	log.Printf("[Uploader] Uploading %s (%d bytes, %d parts of %d KB)...", filepath.Base(filePath), fileSize, totalParts, chunkSize/1024)
+	if startChunk > 0 {
+		log.Printf("[Uploader] Tiếp tục upload dở dang %s từ chunk %d/%d (File ID: %d)...",
+			filepath.Base(filePath), startChunk+1, totalParts, fileID)
+	} else {
+		log.Printf("[Uploader] Uploading %s (%d MB, %d chunks of %d KB)...",
+			filepath.Base(filePath), fileSize/(1024*1024), totalParts, chunkSize/1024)
+	}
 
-	for part := 0; part < totalParts; part++ {
+	for part := startChunk; part < totalParts; part++ {
+		// Seek tới vị trí chunk tương ứng
+		seekOffset := int64(part) * int64(chunkSize)
+		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
+			return 0, 0, fmt.Errorf("seek file to offset %d: %w", seekOffset, err)
+		}
+
 		bytesRead, err := io.ReadFull(file, buf)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return 0, 0, fmt.Errorf("read chunk part %d: %w", part, err)
@@ -63,13 +94,43 @@ func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progr
 			Bytes:          buf[:bytesRead],
 		}
 
-		if _, err := c.api.UploadSaveBigFilePart(ctx, req); err != nil {
-			return 0, 0, fmt.Errorf("UploadSaveBigFilePart %d/%d: %w", part, totalParts, err)
+		// Cơ chế Auto-Retry với Exponential Backoff khi rớt mạng
+		maxRetries := 12
+		var saveErr error
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			select {
+			case <-ctx.Done():
+				return 0, 0, ctx.Err()
+			default:
+			}
+
+			_, saveErr = c.api.UploadSaveBigFilePart(ctx, req)
+			if saveErr == nil {
+				break
+			}
+
+			backoff := time.Duration(attempt*2) * time.Second
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+
+			log.Printf("\n[Mạng chập chờn] Lỗi upload chunk %d/%d: %v. Đang tự kết nối lại lần %d/%d sau %v...",
+				part+1, totalParts, saveErr, attempt, maxRetries, backoff)
+
+			select {
+			case <-ctx.Done():
+				return 0, 0, ctx.Err()
+			case <-time.After(backoff):
+			}
 		}
 
-		uploaded += int64(bytesRead)
-		if progress != nil {
-			progress(uploaded, fileSize)
+		if saveErr != nil {
+			return 0, 0, fmt.Errorf("UploadSaveBigFilePart chunk %d/%d thất bại sau %d lần thử: %w", part+1, totalParts, maxRetries, saveErr)
+		}
+
+		uploaded := seekOffset + int64(bytesRead)
+		if onChunkSuccess != nil {
+			onChunkSuccess(part, uploaded, fileSize)
 		}
 	}
 
@@ -88,14 +149,25 @@ func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progr
 		MimeType: "application/octet-stream",
 	}
 
-	updates, err := c.api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
-		Peer:     peer,
-		Media:    media,
-		Message:  fmt.Sprintf("Encrypted Part: %s", filepath.Base(filePath)),
-		RandomID: randID.Int64(),
-	})
-	if err != nil {
-		return 0, 0, fmt.Errorf("MessagesSendMedia: %w", err)
+	// Retry gửi SendMedia nếu mạng chập chờn lúc chốt file
+	var updates tg.UpdatesClass
+	var sendErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		updates, sendErr = c.api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+			Peer:     peer,
+			Media:    media,
+			Message:  fmt.Sprintf("Encrypted Part: %s", filepath.Base(filePath)),
+			RandomID: randID.Int64(),
+		})
+		if sendErr == nil {
+			break
+		}
+		log.Printf("\n[Mạng chập chờn] MessagesSendMedia lỗi: %v. Thử lại sau 3s (lần %d/10)...", sendErr, attempt)
+		time.Sleep(3 * time.Second)
+	}
+
+	if sendErr != nil {
+		return 0, 0, fmt.Errorf("MessagesSendMedia failed: %w", sendErr)
 	}
 
 	messageID := extractMessageID(updates)
@@ -103,7 +175,7 @@ func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progr
 		return 0, 0, fmt.Errorf("failed to extract message ID from Telegram response")
 	}
 
-	log.Printf("[Uploader] Upload complete. Message ID: %d", messageID)
+	log.Printf("\n[Uploader] Upload chốt hoàn tất. Telegram Message ID: %d", messageID)
 	return messageID, fileSize, nil
 }
 

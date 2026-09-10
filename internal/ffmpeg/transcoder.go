@@ -71,19 +71,24 @@ func TranscodeAll(inputPath, outDir string) (map[string]string, error) {
 	// 1080p
 	if height >= 1080 {
 		out1080 := filepath.Join(outDir, "transcode_1080p.mp4")
-		log.Printf("[FFmpeg] Encoding 1080p -> %s...", out1080)
-		cmd := exec.Command("ffmpeg", "-y", "-i", inputPath,
-			"-vf", "scale=-2:1080",
-			"-c:v", "libx264", "-crf", "22", "-preset", "medium",
-			"-b:v", "2800k", "-maxrate", "3500k", "-bufsize", "5000k",
-			"-c:a", "copy",
-			out1080)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			log.Printf("[FFmpeg] Warning encoding 1080p failed: %v", err)
-		} else {
+		if stat, err := os.Stat(out1080); err == nil && stat.Size() > 1024*100 {
+			log.Printf("[FFmpeg] Phát hiện bản 1080p đã tồn tại (%d MB), bỏ qua bước encode!", stat.Size()/(1024*1024))
 			results["1080p"] = out1080
+		} else {
+			log.Printf("[FFmpeg] Encoding 1080p -> %s...", out1080)
+			cmd := exec.Command("ffmpeg", "-y", "-i", inputPath,
+				"-vf", "scale=-2:1080",
+				"-c:v", "libx264", "-crf", "22", "-preset", "medium",
+				"-b:v", "2800k", "-maxrate", "3500k", "-bufsize", "5000k",
+				"-c:a", "copy",
+				out1080)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Printf("[FFmpeg] Warning encoding 1080p failed: %v", err)
+			} else {
+				results["1080p"] = out1080
+			}
 		}
 	} else {
 		log.Printf("[FFmpeg] Original height (%dp) < 1080p, skipping 1080p transcoding.", height)
@@ -92,19 +97,24 @@ func TranscodeAll(inputPath, outDir string) (map[string]string, error) {
 	// 720p
 	if height >= 720 {
 		out720 := filepath.Join(outDir, "transcode_720p.mp4")
-		log.Printf("[FFmpeg] Encoding 720p -> %s...", out720)
-		cmd := exec.Command("ffmpeg", "-y", "-i", inputPath,
-			"-vf", "scale=-2:720",
-			"-c:v", "libx264", "-crf", "23", "-preset", "medium",
-			"-b:v", "1400k", "-maxrate", "1800k", "-bufsize", "2500k",
-			"-c:a", "copy",
-			out720)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			log.Printf("[FFmpeg] Warning encoding 720p failed: %v", err)
-		} else {
+		if stat, err := os.Stat(out720); err == nil && stat.Size() > 1024*100 {
+			log.Printf("[FFmpeg] Phát hiện bản 720p đã tồn tại (%d MB), bỏ qua bước encode!", stat.Size()/(1024*1024))
 			results["720p"] = out720
+		} else {
+			log.Printf("[FFmpeg] Encoding 720p -> %s...", out720)
+			cmd := exec.Command("ffmpeg", "-y", "-i", inputPath,
+				"-vf", "scale=-2:720",
+				"-c:v", "libx264", "-crf", "23", "-preset", "medium",
+				"-b:v", "1400k", "-maxrate", "1800k", "-bufsize", "2500k",
+				"-c:a", "copy",
+				out720)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Printf("[FFmpeg] Warning encoding 720p failed: %v", err)
+			} else {
+				results["720p"] = out720
+			}
 		}
 	} else {
 		log.Printf("[FFmpeg] Original height (%dp) < 720p, skipping 720p transcoding.", height)
