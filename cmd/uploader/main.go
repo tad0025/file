@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"videostream/internal/config"
@@ -18,18 +20,34 @@ import (
 )
 
 func main() {
-	filePath := flag.String("file", "", "Đường dẫn tới file video gốc (Bắt buộc)")
-	title := flag.String("title", "", "Tiêu đề hiển thị cho video (Tùy chọn)")
-	keepTranscodes := flag.Bool("keep-transcodes", false, "Giữ lại các file video sau khi transcode (mặc định xóa)")
+	filePathFlag := flag.String("file", "", "Đường dẫn tới file video gốc (Tùy chọn)")
+	titleFlag := flag.String("title", "", "Tiêu đề hiển thị cho video (Tùy chọn)")
+	keepTranscodes := flag.Bool("keep-transcodes", true, "Giữ lại các file video sau khi transcode tại thư mục video gốc (mặc định true)")
 	flag.Parse()
 
-	if *filePath == "" {
-		fmt.Println("Lỗi: Thiếu tham số -file")
-		fmt.Println("Sử dụng: go run ./cmd/uploader -file \"path/to/video.mp4\" [-title \"Tiêu đề\"]")
-		os.Exit(1)
+	log.Println("==================================================")
+	log.Println("TeleStream Console Video Uploader & Transcoder")
+	log.Println("==================================================")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	resolvedPath := strings.TrimSpace(*filePathFlag)
+
+	// Nếu không truyền qua cờ lệnh, nhắc người dùng nhập tương tác trên Console
+	if resolvedPath == "" {
+		fmt.Print(">> Nhập đường dẫn file video (kéo thả file vào đây hoặc paste đường dẫn): ")
+		if scanner.Scan() {
+			resolvedPath = strings.TrimSpace(scanner.Text())
+		}
 	}
 
-	absPath, err := filepath.Abs(*filePath)
+	// Loại bỏ dấu nháy kép hoặc đơn do Windows tự thêm khi kéo thả đường dẫn
+	resolvedPath = strings.Trim(resolvedPath, "\"'")
+
+	if resolvedPath == "" {
+		log.Fatalf("Lỗi: Đường dẫn file video không được để trống.")
+	}
+
+	absPath, err := filepath.Abs(resolvedPath)
 	if err != nil {
 		log.Fatalf("Lỗi đường dẫn file: %v", err)
 	}
@@ -39,16 +57,25 @@ func main() {
 		log.Fatalf("File không tồn tại: %v", err)
 	}
 
-	videoTitle := *title
+	videoTitle := strings.TrimSpace(*titleFlag)
 	if videoTitle == "" {
-		videoTitle = filepath.Base(absPath)
+		defaultTitle := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
+		fmt.Printf(">> Nhập tiêu đề video (bấm Enter để lấy mặc định '%s'): ", defaultTitle)
+		if scanner.Scan() {
+			customTitle := strings.TrimSpace(scanner.Text())
+			if customTitle != "" {
+				videoTitle = customTitle
+			} else {
+				videoTitle = defaultTitle
+			}
+		} else {
+			videoTitle = defaultTitle
+		}
 	}
 
-	log.Println("==================================================")
-	log.Println("TeleStream CLI Video Uploader & Transcoder")
-	log.Println("==================================================")
-	log.Printf("File gốc: %s (%d bytes)", absPath, stat.Size())
-	log.Printf("Tiêu đề:  %s", videoTitle)
+	fmt.Println("--------------------------------------------------")
+	log.Printf("File gốc:  %s (%d MB)", absPath, stat.Size()/(1024*1024))
+	log.Printf("Tiêu đề:   %s", videoTitle)
 
 	// 1. Nạp cấu hình & kiểm tra biến môi trường
 	cfg := config.MustLoad()
@@ -58,34 +85,48 @@ func main() {
 		log.Fatalf("FATAL: %v. Hãy cài đặt FFmpeg và thêm vào PATH.", err)
 	}
 
-	// 3. Kết nối MySQL
-	log.Println("[MySQL] Connecting to database...")
+	// 3. Kết nối MySQL Aiven
+	log.Println("[MySQL] Kết nối cơ sở dữ liệu Aiven...")
 	db, err := database.Connect(cfg.MySQLURL)
 	if err != nil {
 		log.Fatalf("FATAL: Kết nối MySQL thất bại: %v", err)
 	}
 	defer db.Close()
 
-	// 4. Khởi tạo thư mục tạm để transcode & mã hóa
-	tempDir, err := os.MkdirTemp("", "telestream_upload_*")
-	if err != nil {
-		log.Fatalf("Tạo thư mục tạm thất bại: %v", err)
+	// 4. Khởi tạo thư mục transcode NGAY TẠI VỊ TRÍ FILE GỐC
+	videoDir := filepath.Dir(absPath)
+	baseName := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
+	transcodeDir := filepath.Join(videoDir, baseName+"_transcoded")
+	if err := os.MkdirAll(transcodeDir, 0755); err != nil {
+		log.Fatalf("Tạo thư mục lưu file transcode thất bại: %v", err)
 	}
+	log.Printf("[FFmpeg] Thư mục lưu các file chuẩn hóa: %s", transcodeDir)
+
 	defer func() {
 		if !*keepTranscodes {
-			_ = os.RemoveAll(tempDir)
+			_ = os.RemoveAll(transcodeDir)
 		}
 	}()
 
-	// 5. Transcode 3 phiên bản độ phân giải
-	log.Println("[FFmpeg] Transcoding video to available resolutions (original, 1080p, 720p)...")
-	transcodedFiles, err := ffmpeg.TranscodeAll(absPath, tempDir)
+	// 5. Transcode 3 phiên bản độ phân giải (1080p, 720p) lưu ngay tại thư mục đó
+	log.Println("[FFmpeg] Bắt đầu chuẩn hóa độ phân giải (original, 1080p, 720p)...")
+	transcodedFiles, err := ffmpeg.TranscodeAll(absPath, transcodeDir)
 	if err != nil {
 		log.Fatalf("Transcode video thất bại: %v", err)
 	}
 
-	// 6. Khởi tạo Telegram Client
-	log.Println("[Telegram] Initializing MTProto client...")
+	log.Println("[FFmpeg] Hoàn tất chuẩn hóa video:")
+	for q, fPath := range transcodedFiles {
+		fStat, _ := os.Stat(fPath)
+		var sz int64
+		if fStat != nil {
+			sz = fStat.Size()
+		}
+		log.Printf("  • Bản %-8s: %s (%d MB)", q, fPath, sz/(1024*1024))
+	}
+
+	// 6. Khởi tạo Telegram Client MTProto
+	log.Println("[Telegram] Đang kết nối tài khoản MTProto Telegram...")
 	tgClient, err := telegram.NewClient(cfg)
 	if err != nil {
 		log.Fatalf("Khởi tạo Telegram client thất bại: %v", err)
@@ -96,7 +137,6 @@ func main() {
 
 	// Chạy quy trình upload bên trong Run loop của gotd
 	err = tgClient.Run(ctx, func(uploadCtx context.Context) error {
-		// Đợi client định vị channel peer
 		time.Sleep(2 * time.Second)
 
 		// Tạo bản ghi Video trong MySQL
@@ -104,9 +144,8 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("create video in db: %w", err)
 		}
-		log.Printf("[Database] Created Video record ID: %d", videoID)
+		log.Printf("[Database] Đã tạo Video ID: %d trong MySQL", videoID)
 
-		// Thứ tự ưu tiên chất lượng
 		qualityOrder := []string{"original", "1080p", "720p"}
 
 		for _, q := range qualityOrder {
@@ -121,7 +160,7 @@ func main() {
 			}
 			qTotalSize := qStat.Size()
 
-			const maxPartBytes = int64(2000000000) // 2GB ngưỡng an toàn cho Telegram
+			const maxPartBytes = int64(2000000000) // 2GB ngưỡng Telegram
 			isMultiPart := qTotalSize > maxPartBytes
 
 			vq := &database.VideoQuality{
@@ -137,9 +176,8 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("create quality in db: %w", err)
 			}
-			log.Printf("[Database] Created Quality '%s' (ID: %d, Size: %d bytes)", q, qualityID, qTotalSize)
+			log.Printf("[Database] Đã tạo bản '%s' (ID: %d, %d MB)", q, qualityID, qTotalSize/(1024*1024))
 
-			// Mở file để chia part và mã hóa
 			file, err := os.Open(qFilePath)
 			if err != nil {
 				return fmt.Errorf("open %s: %w", qFilePath, err)
@@ -157,22 +195,21 @@ func main() {
 				startByte := offset
 				endByte := offset + partBytes - 1
 
-				// Sinh IV riêng cho từng part
 				ivBytes, ivHex, err := crypto.GenerateIV()
 				if err != nil {
 					file.Close()
 					return fmt.Errorf("generate IV: %w", err)
 				}
 
-				// Tạo file tạm mã hóa cho part này
-				encPartPath := filepath.Join(tempDir, fmt.Sprintf("%s_part%d.enc", q, partOrder))
+				// File mã hóa tạm
+				encPartPath := filepath.Join(transcodeDir, fmt.Sprintf("%s_part%d.enc", q, partOrder))
 				encFile, err := os.Create(encPartPath)
 				if err != nil {
 					file.Close()
 					return fmt.Errorf("create enc file: %w", err)
 				}
 
-				log.Printf("[%s Part %d] Encrypting bytes %d - %d with AES-256-CTR...", q, partOrder, startByte, endByte)
+				log.Printf("[%s Part %d] Đang mã hóa AES-256-CTR...", q, partOrder)
 
 				stream, err := crypto.NewSeekableCTR(cfg.AESSecretKey, ivBytes, 0)
 				if err != nil {
@@ -205,10 +242,12 @@ func main() {
 				encFile.Close()
 
 				// Upload file mã hóa lên Telegram
-				log.Printf("[%s Part %d] Uploading encrypted file to Telegram...", q, partOrder)
+				log.Printf("[%s Part %d] Đang tải file mã hóa lên Telegram Channel...", q, partOrder)
 				msgID, actualSize, err := tgClient.UploadEncryptedPart(uploadCtx, encPartPath, func(uploaded, total int64) {
 					pct := float64(uploaded) * 100.0 / float64(total)
-					fmt.Printf("\r  -> Progress: %.1f%% (%d / %d bytes)", pct, uploaded, total)
+					mbUploaded := float64(uploaded) / (1024 * 1024)
+					mbTotal := float64(total) / (1024 * 1024)
+					fmt.Printf("\r  -> Tiến độ Upload: %.1f%% (%.1f / %.1f MB)", pct, mbUploaded, mbTotal)
 				})
 				fmt.Println()
 
@@ -217,7 +256,7 @@ func main() {
 					return fmt.Errorf("UploadEncryptedPart: %w", err)
 				}
 
-				// Xóa file mã hóa ngay sau khi upload xong để tiết kiệm đĩa
+				// Xóa file mã hóa ngay sau khi upload xong để giải phóng đĩa
 				_ = os.Remove(encPartPath)
 
 				// Ghi vào MySQL
@@ -235,7 +274,7 @@ func main() {
 					file.Close()
 					return fmt.Errorf("create part in db: %w", err)
 				}
-				log.Printf("[Database] Saved Part %d -> Telegram Msg ID: %d, IV: %s", partOrder, msgID, ivHex)
+				log.Printf("[Database] Đã lưu Part %d -> Telegram Msg ID: %d", partOrder, msgID)
 
 				offset += partBytes
 				partOrder++
@@ -245,8 +284,8 @@ func main() {
 
 		log.Println("==================================================")
 		log.Printf("UPLOAD HOÀN TẤT THÀNH CÔNG!")
-		log.Printf("Video ID: %d - \"%s\"", videoID, videoTitle)
-		log.Printf("Xem trên web: http://localhost:%s/watch/%d", cfg.Port, videoID)
+		log.Printf("Video: \"%s\" (ID: %d)", videoTitle, videoID)
+		log.Printf("Xem trên Web Back4App: https://videostreamtele1-tuciuxxx.b4a.run/watch/%d", videoID)
 		log.Println("==================================================")
 		return nil
 	})
@@ -254,4 +293,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("FATAL: Upload error: %v", err)
 	}
+
+	fmt.Println("\n>> Bấm phím Enter để kết thúc...")
+	scanner.Scan()
 }
