@@ -225,6 +225,11 @@ func (c *Client) UploadEncryptedPartParallel(
 			Name:  filepath.Base(filePath),
 		},
 		MimeType: "application/octet-stream",
+		Attributes: []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeFilename{
+				FileName: filepath.Base(filePath),
+			},
+		},
 	}
 
 	// Retry gửi SendMedia nếu mạng chập chờn lúc chốt file
