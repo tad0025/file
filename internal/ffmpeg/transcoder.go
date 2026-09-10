@@ -128,7 +128,7 @@ func encodeVideoWithFallback(inputPath, outputPath string, targetHeight int, bit
 			)
 		}
 
-		args = append(args, "-c:a", "copy", outputPath)
+		args = append(args, "-c:a", "copy", "-movflags", "+faststart", outputPath)
 
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout = os.Stdout
