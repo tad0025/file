@@ -479,7 +479,7 @@ func main() {
 		log.Println("==================================================")
 		log.Printf("TẤT CẢ CÁC BẢN ĐÃ UPLOAD THÀNH CÔNG!")
 		log.Printf("Video ID: %d - \"%s\"", state.VideoID, videoTitle)
-		log.Printf("Xem trên Web Back4App: https://videostreamtele1-tuciuxxx.b4a.run/watch/%d", state.VideoID)
+		log.Printf("Xem trên Web Back4App: https://videostreamtele1-6mv6gma4.b4a.run/watch/%d", state.VideoID)
 		log.Println("==================================================")
 		return nil
 	})
