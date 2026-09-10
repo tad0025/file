@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -238,6 +239,9 @@ func (c *Client) UploadEncryptedPartParallel(
 		})
 		if sendErr == nil {
 			break
+		}
+		if strings.Contains(sendErr.Error(), "FILE_PART_LENGTH_INVALID") || strings.Contains(sendErr.Error(), "FILE_PARTS_EMPTY") {
+			return 0, 0, fmt.Errorf("FILE_PART_LENGTH_INVALID: %w", sendErr)
 		}
 		log.Printf("\n[Mạng chập chờn] MessagesSendMedia lỗi: %v. Thử lại sau 3s (lần %d/10)...", sendErr, attempt)
 		time.Sleep(3 * time.Second)

@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -362,6 +364,17 @@ func main() {
 					encFile.Close()
 				}
 
+				// Khởi tạo FileID cố định cho part này nếu chưa có và lưu ngay vào checkpoint
+				if pState.FileID == 0 {
+					n, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+					if err != nil {
+						file.Close()
+						return fmt.Errorf("generate fileID: %w", err)
+					}
+					pState.FileID = n.Int64()
+					_ = saveState(statePath, state)
+				}
+
 				// Khởi tạo map chunk nếu chưa có
 				if pState.UploadedChunks == nil {
 					pState.UploadedChunks = make(map[int]bool)
@@ -375,37 +388,51 @@ func main() {
 				var stateMu sync.Mutex
 				var lastSaveTime time.Time
 				var chunksSinceSave int
+				var msgID, actualSize int64
 
 				// Upload với Worker Pool song song (6 luồng), Resume và Auto-Retry
-				msgID, actualSize, err := tgClient.UploadEncryptedPartParallel(
-					uploadCtx,
-					encPartPath,
-					pState.FileID,
-					pState.UploadedChunks,
-					6,
-					func(chunkIndex int, uploaded, total int64) {
-						stateMu.Lock()
-						defer stateMu.Unlock()
+				for uploadAttempt := 1; uploadAttempt <= 2; uploadAttempt++ {
+					msgID, actualSize, err = tgClient.UploadEncryptedPartParallel(
+						uploadCtx,
+						encPartPath,
+						pState.FileID,
+						pState.UploadedChunks,
+						6,
+						func(chunkIndex int, uploaded, total int64) {
+							stateMu.Lock()
+							defer stateMu.Unlock()
 
-						pState.UploadedChunks[chunkIndex] = true
-						pState.LastUploadedChunk = chunkIndex
-						chunksSinceSave++
+							pState.UploadedChunks[chunkIndex] = true
+							pState.LastUploadedChunk = chunkIndex
+							chunksSinceSave++
 
-						pct := float64(uploaded) * 100.0 / float64(total)
-						mbUploaded := float64(uploaded) / (1024 * 1024)
-						mbTotal := float64(total) / (1024 * 1024)
-						fmt.Printf("\r  -> [%s Part %d] Tiến độ: %.1f%% (%.1f / %.1f MB) [%d chunks đã xong] (6 luồng)",
-							q, partOrder, pct, mbUploaded, mbTotal, len(pState.UploadedChunks))
+							pct := float64(uploaded) * 100.0 / float64(total)
+							mbUploaded := float64(uploaded) / (1024 * 1024)
+							mbTotal := float64(total) / (1024 * 1024)
+							fmt.Printf("\r  -> [%s Part %d] Tiến độ: %.1f%% (%.1f / %.1f MB) [%d chunks đã xong] (6 luồng)",
+								q, partOrder, pct, mbUploaded, mbTotal, len(pState.UploadedChunks))
 
-						now := time.Now()
-						if chunksSinceSave >= 10 || now.Sub(lastSaveTime) > 3*time.Second {
-							_ = saveState(statePath, state)
-							lastSaveTime = now
-							chunksSinceSave = 0
-						}
-					},
-				)
-				fmt.Println()
+							now := time.Now()
+							if chunksSinceSave >= 10 || now.Sub(lastSaveTime) > 3*time.Second {
+								_ = saveState(statePath, state)
+								lastSaveTime = now
+								chunksSinceSave = 0
+							}
+						},
+					)
+					fmt.Println()
+
+					if err != nil && strings.Contains(err.Error(), "FILE_PART_LENGTH_INVALID") && uploadAttempt == 1 {
+						log.Printf("[Uploader] Chunks trên máy chủ Telegram không đồng bộ (do lệch File ID). Tự động cấp FileID mới và đẩy lại %s Part %d...", q, partOrder)
+						n, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+						pState.FileID = n.Int64()
+						pState.UploadedChunks = make(map[int]bool)
+						pState.LastUploadedChunk = -1
+						_ = saveState(statePath, state)
+						continue
+					}
+					break
+				}
 
 				if err != nil {
 					file.Close()
