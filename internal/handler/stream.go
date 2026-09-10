@@ -176,7 +176,9 @@ func (h *StreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			chunk, err := h.downloader.ReadChunk(ctx, part.TgChatID, part.TgMessageID, curOffset, int(readLimit))
 			if err != nil {
-				log.Printf("[Stream] ReadChunk error part %d (offset %d): %v", part.PartOrder, curOffset, err)
+				if ctx.Err() == nil && !strings.Contains(err.Error(), "context canceled") {
+					log.Printf("[Stream] ReadChunk error part %d (offset %d): %v", part.PartOrder, curOffset, err)
+				}
 				return
 			}
 
