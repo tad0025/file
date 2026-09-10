@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"videostream/internal/config"
@@ -42,9 +43,10 @@ type PartState struct {
 	EndByte           int64  `json:"end_byte"`
 	PartSize          int64  `json:"part_size"`
 	IV                string `json:"iv"`
-	LastUploadedChunk int    `json:"last_uploaded_chunk"`
-	TgMessageID       int64  `json:"tg_message_id"`
-	Done              bool   `json:"done"`
+	LastUploadedChunk int          `json:"last_uploaded_chunk"`
+	UploadedChunks    map[int]bool `json:"uploaded_chunks,omitempty"`
+	TgMessageID       int64        `json:"tg_message_id"`
+	Done              bool         `json:"done"`
 }
 
 func loadState(path string) (*UploadState, error) {
@@ -360,28 +362,46 @@ func main() {
 					encFile.Close()
 				}
 
-				// Xác định chunk bắt đầu upload
-				startChunk := pState.LastUploadedChunk + 1
-				if startChunk < 0 {
-					startChunk = 0
+				// Khởi tạo map chunk nếu chưa có
+				if pState.UploadedChunks == nil {
+					pState.UploadedChunks = make(map[int]bool)
+					if pState.LastUploadedChunk >= 0 {
+						for i := 0; i <= pState.LastUploadedChunk; i++ {
+							pState.UploadedChunks[i] = true
+						}
+					}
 				}
 
-				// Upload với tính năng Resume và Auto-Retry
-				msgID, actualSize, err := tgClient.UploadEncryptedPartResume(
+				var stateMu sync.Mutex
+				var lastSaveTime time.Time
+				var chunksSinceSave int
+
+				// Upload với Worker Pool song song (6 luồng), Resume và Auto-Retry
+				msgID, actualSize, err := tgClient.UploadEncryptedPartParallel(
 					uploadCtx,
 					encPartPath,
 					pState.FileID,
-					startChunk,
+					pState.UploadedChunks,
+					6,
 					func(chunkIndex int, uploaded, total int64) {
+						stateMu.Lock()
+						defer stateMu.Unlock()
+
+						pState.UploadedChunks[chunkIndex] = true
+						pState.LastUploadedChunk = chunkIndex
+						chunksSinceSave++
+
 						pct := float64(uploaded) * 100.0 / float64(total)
 						mbUploaded := float64(uploaded) / (1024 * 1024)
 						mbTotal := float64(total) / (1024 * 1024)
-						fmt.Printf("\r  -> [%s Part %d] Tiến độ: %.1f%% (%.1f / %.1f MB)", q, partOrder, pct, mbUploaded, mbTotal)
+						fmt.Printf("\r  -> [%s Part %d] Tiến độ: %.1f%% (%.1f / %.1f MB) [%d chunks đã xong] (6 luồng)",
+							q, partOrder, pct, mbUploaded, mbTotal, len(pState.UploadedChunks))
 
-						// Lưu checkpoint mỗi 10 chunks
-						pState.LastUploadedChunk = chunkIndex
-						if chunkIndex%10 == 0 {
+						now := time.Now()
+						if chunksSinceSave >= 10 || now.Sub(lastSaveTime) > 3*time.Second {
 							_ = saveState(statePath, state)
+							lastSaveTime = now
+							chunksSinceSave = 0
 						}
 					},
 				)
@@ -389,7 +409,7 @@ func main() {
 
 				if err != nil {
 					file.Close()
-					return fmt.Errorf("UploadEncryptedPartResume: %w", err)
+					return fmt.Errorf("UploadEncryptedPartParallel: %w", err)
 				}
 
 				// Xóa file mã hóa ngay sau khi upload xong

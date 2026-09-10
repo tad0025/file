@@ -9,6 +9,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gotd/td/tg"
@@ -19,19 +21,35 @@ type ChunkSuccessFunc func(chunkIndex int, uploadedBytes, totalBytes int64)
 
 // UploadEncryptedPart giữ tính tương thích ngược cho hàm gọi thông thường
 func (c *Client) UploadEncryptedPart(ctx context.Context, filePath string, progress ProgressFunc) (int64, int64, error) {
-	return c.UploadEncryptedPartResume(ctx, filePath, 0, 0, func(chunkIndex int, uploadedBytes, totalBytes int64) {
+	return c.UploadEncryptedPartParallel(ctx, filePath, 0, nil, 6, func(chunkIndex int, uploadedBytes, totalBytes int64) {
 		if progress != nil {
 			progress(uploadedBytes, totalBytes)
 		}
 	})
 }
 
-// UploadEncryptedPartResume upload file đã mã hóa (.enc) lên Telegram có hỗ trợ Resume và Auto-Retry khi rớt mạng
+// UploadEncryptedPartResume hỗ trợ resume dựa trên startChunk tuần tự cũ
 func (c *Client) UploadEncryptedPartResume(
 	ctx context.Context,
 	filePath string,
 	existingFileID int64,
 	startChunk int,
+	onChunkSuccess ChunkSuccessFunc,
+) (int64, int64, error) {
+	uploaded := make(map[int]bool)
+	for i := 0; i < startChunk; i++ {
+		uploaded[i] = true
+	}
+	return c.UploadEncryptedPartParallel(ctx, filePath, existingFileID, uploaded, 6, onChunkSuccess)
+}
+
+// UploadEncryptedPartParallel upload file đã mã hóa (.enc) lên Telegram qua Worker Pool song song (mặc định 6 luồng)
+func (c *Client) UploadEncryptedPartParallel(
+	ctx context.Context,
+	filePath string,
+	existingFileID int64,
+	uploadedChunks map[int]bool,
+	concurrency int,
 	onChunkSuccess ChunkSuccessFunc,
 ) (int64, int64, error) {
 	file, err := os.Open(filePath)
@@ -61,77 +79,136 @@ func (c *Client) UploadEncryptedPartResume(
 	}
 
 	totalParts := int((fileSize + int64(chunkSize) - 1) / int64(chunkSize))
-	buf := make([]byte, chunkSize)
-
-	if startChunk > 0 {
-		log.Printf("[Uploader] Tiếp tục upload dở dang %s từ chunk %d/%d (File ID: %d)...",
-			filepath.Base(filePath), startChunk+1, totalParts, fileID)
-	} else {
-		log.Printf("[Uploader] Uploading %s (%d MB, %d chunks of %d KB)...",
-			filepath.Base(filePath), fileSize/(1024*1024), totalParts, chunkSize/1024)
+	if concurrency <= 0 {
+		concurrency = 6
 	}
 
-	for part := startChunk; part < totalParts; part++ {
-		// Seek tới vị trí chunk tương ứng
-		seekOffset := int64(part) * int64(chunkSize)
-		if _, err := file.Seek(seekOffset, io.SeekStart); err != nil {
-			return 0, 0, fmt.Errorf("seek file to offset %d: %w", seekOffset, err)
-		}
-
-		bytesRead, err := io.ReadFull(file, buf)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return 0, 0, fmt.Errorf("read chunk part %d: %w", part, err)
-		}
-
-		if bytesRead == 0 {
-			break
-		}
-
-		req := &tg.UploadSaveBigFilePartRequest{
-			FileID:         fileID,
-			FilePart:       part,
-			FileTotalParts: totalParts,
-			Bytes:          buf[:bytesRead],
-		}
-
-		// Cơ chế Auto-Retry với Exponential Backoff khi rớt mạng
-		maxRetries := 12
-		var saveErr error
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			select {
-			case <-ctx.Done():
-				return 0, 0, ctx.Err()
-			default:
-			}
-
-			_, saveErr = c.api.UploadSaveBigFilePart(ctx, req)
-			if saveErr == nil {
-				break
-			}
-
-			backoff := time.Duration(attempt*2) * time.Second
-			if backoff > 30*time.Second {
-				backoff = 30 * time.Second
-			}
-
-			log.Printf("\n[Mạng chập chờn] Lỗi upload chunk %d/%d: %v. Đang tự kết nối lại lần %d/%d sau %v...",
-				part+1, totalParts, saveErr, attempt, maxRetries, backoff)
-
-			select {
-			case <-ctx.Done():
-				return 0, 0, ctx.Err()
-			case <-time.After(backoff):
+	// Tính toán dung lượng đã upload trước đó nếu resume
+	var initialUploadedBytes int64
+	doneCount := 0
+	if uploadedChunks != nil {
+		for p := 0; p < totalParts; p++ {
+			if uploadedChunks[p] {
+				doneCount++
+				partBytes := int64(chunkSize)
+				if p == totalParts-1 {
+					partBytes = fileSize - int64(p)*int64(chunkSize)
+				}
+				initialUploadedBytes += partBytes
 			}
 		}
+	}
 
-		if saveErr != nil {
-			return 0, 0, fmt.Errorf("UploadSaveBigFilePart chunk %d/%d thất bại sau %d lần thử: %w", part+1, totalParts, maxRetries, saveErr)
-		}
+	if doneCount > 0 {
+		log.Printf("[Uploader] Tiếp tục upload %s (%d/%d chunks đã có, còn lại %d chunks) qua %d luồng song song (File ID: %d)...",
+			filepath.Base(filePath), doneCount, totalParts, totalParts-doneCount, concurrency, fileID)
+	} else {
+		log.Printf("[Uploader] Uploading %s (%d MB, %d chunks of %d KB) qua %d luồng song song...",
+			filepath.Base(filePath), fileSize/(1024*1024), totalParts, chunkSize/1024, concurrency)
+	}
 
-		uploaded := seekOffset + int64(bytesRead)
-		if onChunkSuccess != nil {
-			onChunkSuccess(part, uploaded, fileSize)
+	tasks := make(chan int, totalParts)
+	for part := 0; part < totalParts; part++ {
+		if uploadedChunks != nil && uploadedChunks[part] {
+			continue
 		}
+		tasks <- part
+	}
+	close(tasks)
+
+	var uploadedBytesCount atomic.Int64
+	uploadedBytesCount.Store(initialUploadedBytes)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+
+	for w := 0; w < concurrency; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			buf := make([]byte, chunkSize)
+
+			for part := range tasks {
+				select {
+				case <-workerCtx.Done():
+					return
+				default:
+				}
+
+				seekOffset := int64(part) * int64(chunkSize)
+				bytesRead, rErr := file.ReadAt(buf, seekOffset)
+				if rErr != nil && rErr != io.EOF && rErr != io.ErrUnexpectedEOF {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("read chunk %d: %w", part, rErr)
+						cancel()
+					})
+					return
+				}
+				if bytesRead == 0 {
+					continue
+				}
+
+				req := &tg.UploadSaveBigFilePartRequest{
+					FileID:         fileID,
+					FilePart:       part,
+					FileTotalParts: totalParts,
+					Bytes:          buf[:bytesRead],
+				}
+
+				// Cơ chế Auto-Retry với Exponential Backoff khi rớt mạng
+				maxRetries := 12
+				var saveErr error
+				for attempt := 1; attempt <= maxRetries; attempt++ {
+					select {
+					case <-workerCtx.Done():
+						return
+					default:
+					}
+
+					_, saveErr = c.api.UploadSaveBigFilePart(workerCtx, req)
+					if saveErr == nil {
+						break
+					}
+
+					backoff := time.Duration(attempt*2) * time.Second
+					if backoff > 30*time.Second {
+						backoff = 30 * time.Second
+					}
+
+					log.Printf("\n[Mạng chập chờn] Lỗi upload chunk %d/%d (luồng %d): %v. Đang tự kết nối lại lần %d/%d sau %v...",
+						part+1, totalParts, workerID, saveErr, attempt, maxRetries, backoff)
+
+					select {
+					case <-workerCtx.Done():
+						return
+					case <-time.After(backoff):
+					}
+				}
+
+				if saveErr != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("UploadSaveBigFilePart chunk %d/%d thất bại sau %d lần thử: %w", part+1, totalParts, maxRetries, saveErr)
+						cancel()
+					})
+					return
+				}
+
+				currentUploaded := uploadedBytesCount.Add(int64(bytesRead))
+				if onChunkSuccess != nil {
+					onChunkSuccess(part, currentUploaded, fileSize)
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+
+	if firstErr != nil {
+		return 0, 0, firstErr
 	}
 
 	peer := c.GetInputPeer()
