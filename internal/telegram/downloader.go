@@ -125,11 +125,23 @@ func (d *Downloader) ReadChunk(ctx context.Context, chatID, messageID int64, off
 		return nil, err
 	}
 
-	// MTProto upload.getFile yêu cầu offset chia hết cho 4096 (4KB) và limit phải là lũy thừa của 2
+	// MTProto upload.getFile yêu cầu:
+	// 1. offset phải chia hết cho 4096 (4KB)
+	// 2. Không được đọc vượt qua ranh giới part (512KB) của file
+	// 3. limit phải là lũy thừa của 2 và <= 262144 (256KB)
 	const align = 4096
+	const partBlockSize = 512 * 1024
+
 	alignedOffset := (offset / align) * align
 	discardPrefix := int(offset - alignedOffset)
 	neededTotal := discardPrefix + limit
+
+	// Giới hạn không vượt qua ranh giới part 512KB tiếp theo
+	nextBoundary := ((alignedOffset / partBlockSize) + 1) * partBlockSize
+	bytesLeftInBlock := int(nextBoundary - alignedOffset)
+	if neededTotal > bytesLeftInBlock {
+		neededTotal = bytesLeftInBlock
+	}
 
 	alignedLimit := nextPowerOf2(neededTotal)
 
