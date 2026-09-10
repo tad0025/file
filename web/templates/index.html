@@ -1,0 +1,73 @@
+{{define "content"}}
+<div class="space-y-6">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <h2 class="text-2xl font-bold text-white tracking-tight">Thư viện Video Đã Lưu</h2>
+            <p class="text-sm text-slate-400">Các video được mã hóa AES-256-CTR và lưu trữ bảo mật trên Telegram</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                Storage Telegram Ready
+            </span>
+        </div>
+    </div>
+
+    {{if not .Videos}}
+    <div class="glass-panel p-12 rounded-2xl text-center max-w-xl mx-auto border border-slate-800">
+        <div class="w-16 h-16 rounded-full bg-slate-800/80 flex items-center justify-center mx-auto mb-4 text-slate-400">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+        </div>
+        <h3 class="text-lg font-semibold text-white mb-2">Chưa có video nào trong kho</h3>
+        <p class="text-sm text-slate-400 mb-6">Sử dụng công cụ <code>uploader</code> tại máy cá nhân để tải và mã hóa video lên Telegram:</p>
+        <div class="bg-slate-900/90 text-slate-300 font-mono text-xs p-3 rounded-lg border border-slate-800 text-left overflow-x-auto">
+            go run ./cmd/uploader -file "video.mp4" -title "Tiêu đề video"
+        </div>
+    </div>
+    {{else}}
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {{range .Videos}}
+        <div class="glass-panel rounded-2xl overflow-hidden border border-slate-800 hover:border-slate-700/80 transition-all flex flex-col group">
+            <div class="aspect-video bg-gradient-to-tr from-slate-900 via-slate-850 to-slate-800 flex items-center justify-center relative p-6">
+                <div class="w-14 h-14 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-lg shadow-indigo-600/10">
+                    <svg class="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z"/>
+                    </svg>
+                </div>
+                <div class="absolute bottom-3 right-3 text-[11px] px-2 py-0.5 rounded bg-slate-900/80 backdrop-blur border border-slate-700/50 text-slate-300 font-mono">
+                    {{.CreatedAt.Format "02/01/2006"}}
+                </div>
+            </div>
+
+            <div class="p-5 flex-1 flex flex-col justify-between">
+                <div>
+                    <h3 class="font-semibold text-white group-hover:text-indigo-400 transition-colors line-clamp-1 mb-2">{{.Title}}</h3>
+                    
+                    <div class="flex flex-wrap gap-1.5 mb-4">
+                        {{range .Qualities}}
+                        <span class="text-[11px] font-medium px-2 py-0.5 rounded-md border 
+                            {{if eq .Quality "original"}}bg-indigo-500/10 text-indigo-300 border-indigo-500/20
+                            {{else if eq .Quality "1080p"}}bg-cyan-500/10 text-cyan-300 border-cyan-500/20
+                            {{else}}bg-slate-700/40 text-slate-300 border-slate-600/40{{end}}">
+                            {{.Quality}} ({{formatBytes .TotalSize}})
+                            {{if .IsMultiPart}}<span class="text-[9px] text-amber-400 font-bold ml-0.5">Multi-part</span>{{end}}
+                        </span>
+                        {{end}}
+                    </div>
+                </div>
+
+                <a href="/watch/{{.ID}}" class="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-xs font-semibold tracking-wide text-center transition-all flex items-center justify-center gap-2 border border-slate-700/50 hover:border-transparent shadow-sm">
+                    <span>Xem Video</span>
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                    </svg>
+                </a>
+            </div>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+{{end}}

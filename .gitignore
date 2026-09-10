@@ -1,0 +1,25 @@
+# Environment files
+.env
+*.env
+
+# Binaries & build artifacts
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/server
+/uploader
+
+# Temporary files & Transcoding cache
+*.enc
+*.tmp
+temp_*/
+transcode_*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
