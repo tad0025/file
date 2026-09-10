@@ -106,6 +106,17 @@ func (d *Downloader) GetDocumentLocation(ctx context.Context, chatID, messageID 
 	return loc, nil
 }
 
+func nextPowerOf2(n int) int {
+	if n <= 4096 {
+		return 4096
+	}
+	p := 4096
+	for p < n && p < 1024*1024 {
+		p <<= 1
+	}
+	return p
+}
+
 // ReadChunk đọc một khối byte từ document trên Telegram, tự động căn lề 4096 bytes theo chuẩn MTProto
 func (d *Downloader) ReadChunk(ctx context.Context, chatID, messageID int64, offset int64, limit int) ([]byte, error) {
 	loc, err := d.GetDocumentLocation(ctx, chatID, messageID)
@@ -113,16 +124,13 @@ func (d *Downloader) ReadChunk(ctx context.Context, chatID, messageID int64, off
 		return nil, err
 	}
 
-	// MTProto upload.getFile yêu cầu offset và limit chia hết cho 4096 (4KB)
+	// MTProto upload.getFile yêu cầu offset chia hết cho 4096 (4KB) và limit phải là lũy thừa của 2
 	const align = 4096
 	alignedOffset := (offset / align) * align
 	discardPrefix := int(offset - alignedOffset)
 	neededTotal := discardPrefix + limit
 
-	alignedLimit := ((neededTotal + align - 1) / align) * align
-	if alignedLimit > 1024*1024 { // tối đa 1MB theo MTProto spec
-		alignedLimit = 1024 * 1024
-	}
+	alignedLimit := nextPowerOf2(neededTotal)
 
 	req := &tg.UploadGetFileRequest{
 		Location: loc,

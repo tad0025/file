@@ -119,6 +119,10 @@ func (h *StreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
+
 	ctx := r.Context()
 	chunkSize := h.cfg.ChunkSize
 	if chunkSize <= 0 {
