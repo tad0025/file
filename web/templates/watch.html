@@ -83,18 +83,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // Xử lý đổi độ phân giải giữ nguyên currentTime
     qualitySelect.addEventListener('change', () => {
         const newQualityId = qualitySelect.value;
-        const currentTime = player.currentTime();
+        const currentTime = player.currentTime() || 0;
         const wasPlaying = !player.paused();
 
         console.log('[Player] Switching quality to ID:', newQualityId, 'at second:', currentTime);
 
+        player.error(null);
+        player.pause();
         player.src({
             src: getStreamURL(newQualityId),
             type: 'video/mp4'
         });
+        player.load();
 
         player.one('loadedmetadata', () => {
-            player.currentTime(currentTime);
+            if (currentTime > 0) {
+                player.currentTime(currentTime);
+            }
             if (wasPlaying) {
                 player.play().catch(e => console.log('[Player] Autoplay prevented:', e));
             }
