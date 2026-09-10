@@ -124,10 +124,8 @@ func (h *StreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	chunkSize := h.cfg.ChunkSize
-	if chunkSize <= 0 {
-		chunkSize = 512 * 1024
-	}
+	// Cỡ chunk stream tối ưu 128KB (đảm bảo kèm padding căn lề không vượt trần 256KB của MTProto)
+	chunkSize := 128 * 1024
 
 	// Ghép ảo các Part (Virtual Concatenation)
 	for _, part := range quality.Parts {

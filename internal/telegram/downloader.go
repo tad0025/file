@@ -111,7 +111,8 @@ func nextPowerOf2(n int) int {
 		return 4096
 	}
 	p := 4096
-	for p < n && p < 1024*1024 {
+	// Telegram MTProto upload.getFile giới hạn cứng tối đa là 256KB (262144 bytes)
+	for p < n && p < 262144 {
 		p <<= 1
 	}
 	return p
