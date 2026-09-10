@@ -10,11 +10,11 @@ Hệ thống được chia thành 2 module độc lập:
 
 1. **CLI Upload Tool (`cmd/uploader`) - Chạy tại máy cá nhân (Local)**:
    - Dùng **ffprobe** tự động dò độ phân giải video gốc.
-   - Dùng **FFmpeg** encode thành các phiên bản: `original` (giữ nguyên), `1080p` (nếu gốc $\ge 1080p$), `720p` (nếu gốc $\ge 720p$).
-   - Tự động chia nhỏ các file $> 2\text{GB}$ thành các part $\le 2\text{GB}$ (ngưỡng an toàn cho Telegram MTProto).
+   - Dùng **FFmpeg** encode thành các phiên bản: `original` (giữ nguyên), `1080p` (nếu gốc >= 1080p), `720p` (nếu gốc >= 720p).
+   - Tự động chia nhỏ các file > 2GB thành các part <= 2GB (ngưỡng an toàn cho Telegram MTProto).
    - Mã hóa từng part bằng thuật toán **AES-256-CTR** với vector khởi tạo `iv` ngẫu nhiên (16 bytes hex) riêng biệt cho mỗi part.
    - Đẩy các file mã hóa `.enc` lên Telegram Channel qua tài khoản MTProto bằng chuỗi `TG_SESSION_STRING`.
-   - Ghi dữ liệu phân cấp vào MySQL: `videos` $\rightarrow$ `video_qualities` $\rightarrow$ `video_parts`.
+   - Ghi dữ liệu phân cấp vào MySQL: `videos` -> `video_qualities` -> `video_parts`.
    - Tự động dọn dẹp các file `.enc` và file tạm sau khi hoàn tất.
 
 2. **Streaming Server (`cmd/server`) - Deploy trên Back4App (256MB RAM)**:
@@ -23,7 +23,7 @@ Hệ thống được chia thành 2 module độc lập:
    - **Zero-disk & Low-RAM Streaming Engine**:
      - Tiếp nhận HTTP Range Request (`206 Partial Content`) tại `/api/stream/{quality_id}`.
      - Lấy từng chunk nhỏ (512KB) qua socket MTProto (`upload.getFile`) trực tiếp từ Telegram.
-     - Giải mã **AES-256-CTR on-the-fly** trực tiếp trên RAM: Tua trực tiếp tới byte bất kỳ bằng cách dịch counter $\text{IV} + \lfloor \text{local\_offset} / 16 \rfloor$.
+     - Giải mã **AES-256-CTR on-the-fly** trực tiếp trên RAM: Tua trực tiếp tới byte bất kỳ bằng cách dịch counter: `IV + (local_offset / 16)`.
      - Pipe dữ liệu video thô trực tiếp ra `http.ResponseWriter`. Client nhận video phát ngay mà không cần giải mã trên trình duyệt.
      - RAM server luôn ổn định dưới **40MB RAM** nhờ cơ chế tái sử dụng buffer (`sync.Pool`).
 
