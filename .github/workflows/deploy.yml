@@ -23,6 +23,7 @@ jobs:
           go env -w GOPROXY=https://goproxy.io,direct
           go mod tidy
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server_app ./cmd/server/main.go
+          chmod +x server_app
 
       - name: Deploy Binary via SCP
         uses: appleboy/scp-action@v0.1.7
@@ -33,13 +34,8 @@ jobs:
           source: "server_app,web/templates,web/static"
           target: "/home/${{ secrets.SSH_USER }}/app-file"
 
-      - name: Restart Site on Alwaysdata
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          script: |
-            chmod +x /home/${{ secrets.SSH_USER }}/app-file/server_app
-            killall -9 server_app || true
-            exit 0
+      - name: Restart Site via Alwaysdata API
+        run: |
+          curl -X POST \
+            -u "${{ secrets.ALWAYSDATA_API_TOKEN }}:" \
+            https://api.alwaysdata.com/v1/site/1076022/restart/
