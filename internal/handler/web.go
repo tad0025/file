@@ -104,7 +104,7 @@ func (h *WebHandler) HandleWatchPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderTemplate(w, "watch.html", map[string]interface{}{
-		"Title": "Xem: " + video.Title,
+		"Title": "Xem:1 " + video.Title,
 		"Video": video,
 		"Token": token,
 	})
