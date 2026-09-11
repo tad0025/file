@@ -144,6 +144,9 @@ func (d *Downloader) ReadChunk(ctx context.Context, chatID, messageID int64, off
 	}
 
 	alignedLimit := nextPowerOf2(neededTotal)
+	for alignedLimit > bytesLeftInBlock && alignedLimit > 4096 {
+		alignedLimit >>= 1
+	}
 
 	req := &tg.UploadGetFileRequest{
 		Location: loc,
