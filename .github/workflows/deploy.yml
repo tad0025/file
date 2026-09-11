@@ -41,4 +41,5 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             chmod +x /home/${{ secrets.SSH_USER }}/app-file/server_app
-            alwaysdata-site restart || pkill -f server_app || true
+            killall -9 server_app || true
+            exit 0
