@@ -1,0 +1,44 @@
+name: Build and Deploy to Alwaysdata
+
+on:
+  push:
+    branches:
+      - main  # hoặc master tùy branch của bạn
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build Binary for Linux
+        run: |
+          go env -w GOPROXY=https://goproxy.io,direct
+          go mod tidy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server_app ./cmd/server/main.go
+
+      - name: Deploy Binary via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          source: "server_app,web/templates"
+          target: "/home/${{ secrets.SSH_USER }}/app-file"
+
+      - name: Restart Site on Alwaysdata
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            chmod +x /home/${{ secrets.SSH_USER }}/app-file/server_app
+            alwaysdata-site restart || pkill -f server_app || true
