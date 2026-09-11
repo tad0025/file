@@ -30,7 +30,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
-          source: "server_app,web/templates"
+          source: "server_app,web/templates,web/static"
           target: "/home/${{ secrets.SSH_USER }}/app-file"
 
       - name: Restart Site on Alwaysdata

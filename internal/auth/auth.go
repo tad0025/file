@@ -58,7 +58,7 @@ func (a *AuthManager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Bỏ qua các endpoint công khai
 		path := r.URL.Path
-		if path == "/health" || path == "/login" || path == "/api/login" || strings.HasPrefix(path, "/static/") {
+		if path == "/health" || path == "/login" || path == "/api/login" || path == "/favicon.ico" || path == "/favicon.png" || strings.HasPrefix(path, "/static/") {
 			next.ServeHTTP(w, r)
 			return
 		}

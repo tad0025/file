@@ -76,6 +76,20 @@ func main() {
 	// 5. Cấu hình định tuyến HTTP
 	mux := http.NewServeMux()
 
+	// Static & Favicon
+	fs := http.FileServer(http.Dir("web/static"))
+	mux.Handle("/static/", http.StripPrefix("/static/", fs))
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		http.ServeFile(w, r, "web/static/favicon.ico")
+	})
+	mux.HandleFunc("/favicon.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		http.ServeFile(w, r, "web/static/favicon.png")
+	})
+
 	// Endpoints công khai
 	mux.HandleFunc("/login", webHandler.HandleLoginPage)
 	mux.HandleFunc("/api/login", apiHandler.HandleLogin)
